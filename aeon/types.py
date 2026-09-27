@@ -78,6 +78,10 @@ class ControllerAction(str, Enum):
     SWITCH_MODEL = "SWITCH_MODEL"
     RETRIEVE = "RETRIEVE"
     USE_TOOL = "USE_TOOL"
+    CACHE_HIT = "CACHE_HIT"
+    PARTIAL_CACHE_REUSE = "PARTIAL_CACHE_REUSE"
+    RECOMPUTE = "RECOMPUTE"
+    VERIFY_CACHE = "VERIFY_CACHE"
 
 
 class DecisionReason(str, Enum):
@@ -91,6 +95,10 @@ class DecisionReason(str, Enum):
     VERIFY_HIGH_UNCERTAINTY = "VERIFY_HIGH_UNCERTAINTY"
     TOOL_MORE_EFFICIENT = "TOOL_MORE_EFFICIENT"
     CACHE_REUSE_MORE_EFFICIENT = "CACHE_REUSE_MORE_EFFICIENT"
+    CACHE_HIT_SAFE = "CACHE_HIT_SAFE"
+    PARTIAL_PREFIX_REUSE = "PARTIAL_PREFIX_REUSE"
+    CACHE_REJECTED_STALE = "CACHE_REJECTED_STALE"
+    CACHE_REJECTED_RISK = "CACHE_REJECTED_RISK"
 
 
 class UtilityWeights(BaseModel):
@@ -164,6 +172,22 @@ class Telemetry(BaseModel):
     compute_type: str = "ESTIMATED"
     energy_type: str = "ESTIMATED"
 
+    # Phase 3 Memory Hierarchy Telemetry
+    memory_hit: bool = False
+    memory_level: Optional[str] = None
+    memory_action: Optional[str] = None
+    reused_tokens: int = 0
+    compute_saved_flops: float = 0.0
+    latency_saved_ms: float = 0.0
+    cost_saved_usd: float = 0.0
+    energy_saved_joules: float = 0.0
+    lookup_latency_ms: float = 0.0
+    memory_similarity: Optional[float] = None
+    freshness_score: Optional[float] = None
+    reuse_confidence: Optional[float] = None
+    reuse_decision: Optional[str] = None
+    memory_bytes_reused: int = 0
+
 
 class ComputeState(BaseModel):
     """
@@ -223,6 +247,11 @@ class InferenceRequest(BaseModel):
     ground_truth: Optional[str] = None
     expected_answer: Optional[str] = None
     budget_constraints: Optional[BudgetConstraints] = None
+    memory: Optional[bool] = None
+    memory_levels: Optional[List[str]] = None
+    session_id: Optional[str] = None
+    model_version: Optional[str] = None
+    consistency: Optional[str] = None
 
 
 class ExecutionPlan(BaseModel):

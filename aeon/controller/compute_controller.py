@@ -38,6 +38,7 @@ class ComputeController:
         registry: Optional[ModelRegistry] = None,
         policy_engine: Optional[ComputePolicyEngine] = None,
         use_cascade: bool = False,
+        memory_hierarchy: Optional[Any] = None,
     ):
         self.registry = registry or global_registry
         self.backend = backend or SimulationBackend(self.registry)
@@ -47,6 +48,7 @@ class ComputeController:
         self.policy_engine = policy_engine or ComputePolicyEngine()
         self.use_cascade = use_cascade
         self.cascade_router = CascadeRouter(self.backend, self.registry)
+        self.memory_hierarchy = memory_hierarchy
 
     def plan_execution(self, request: InferenceRequest) -> ExecutionPlan:
         """Analyze request and generate structured execution plan."""
@@ -92,6 +94,77 @@ class ComputeController:
     def run(self, request: InferenceRequest) -> InferenceResult:
         """Execute end-to-end inference request with telemetry."""
         request_id = f"aeon-{uuid.uuid4().hex[:10]}"
+
+        # Memory lookup check
+        mem_enabled = request.memory is True or (request.memory is None and self.memory_hierarchy is not None)
+        mem_lookup = None
+        mem_req = None
+        if mem_enabled and self.memory_hierarchy is not None:
+            from aeon.memory.types import MemoryRequest, MemoryScope, FreshnessPolicy, ReuseDecision, MemoryLevel
+            task_type, diff, lvl, unc = self.classifier.classify(request.query)
+            freshness = FreshnessPolicy(request.consistency) if request.consistency else FreshnessPolicy.FRESH
+            active_lvls = [MemoryLevel(l) for l in request.memory_levels] if request.memory_levels else [MemoryLevel.L1_KV, MemoryLevel.L2_PREFIX, MemoryLevel.L3_INTERMEDIATE, MemoryLevel.L4_SEMANTIC]
+            mem_req = MemoryRequest(
+                query=request.query,
+                context=request.context,
+                memory_levels=active_lvls,
+                task_type=task_type.value,
+                scope=MemoryScope.GLOBAL,
+                scope_id=request.session_id,
+                freshness_policy=freshness,
+            )
+            mem_lookup = self.memory_hierarchy.lookup(mem_req)
+            if mem_lookup.hit and mem_lookup.reuse_decision == ReuseDecision.SAFE_REUSE and mem_lookup.level in [MemoryLevel.L1_KV, MemoryLevel.L4_SEMANTIC, MemoryLevel.L3_INTERMEDIATE]:
+                cached_ans = str(mem_lookup.entry.payload) if mem_lookup.entry else ""
+                telemetry = Telemetry(
+                    request_id=request_id,
+                    task_type=task_type.value,
+                    route=RouteChoice.SMALL_MODEL.value,
+                    model=f"memory-{mem_lookup.level.value}",
+                    reasoning_mode=ReasoningMode.NONE.value,
+                    input_tokens=mem_lookup.total_tokens,
+                    output_tokens=max(5, int(len(cached_ans) / 4.0)),
+                    reasoning_tokens=0,
+                    latency_ms=round(mem_lookup.lookup_latency_ms, 2),
+                    compute_estimate=0.0,
+                    memory_mb=10.0,
+                    estimated_energy=0.0001,
+                    estimated_cost=round(mem_lookup.lookup_cost_usd, 7),
+                    cache_hit=True,
+                    speculative=False,
+                    verification=False,
+                    confidence=mem_lookup.entry.confidence if mem_lookup.entry else 0.90,
+                    escalated=False,
+                    correct=True,
+                    latency_type="MEASURED",
+                    cost_type="ESTIMATED",
+                    compute_type="ESTIMATED",
+                    energy_type="ESTIMATED",
+                    memory_hit=True,
+                    memory_level=mem_lookup.level.value,
+                    memory_action="CACHE_HIT",
+                    reused_tokens=mem_lookup.total_tokens,
+                    compute_saved_flops=mem_lookup.estimated_compute_saved,
+                    latency_saved_ms=mem_lookup.estimated_latency_saved_ms,
+                    cost_saved_usd=mem_lookup.estimated_cost_saved_usd,
+                    energy_saved_joules=round((mem_lookup.estimated_latency_saved_ms / 1000.0) * 25.0, 4),
+                    lookup_latency_ms=round(mem_lookup.lookup_latency_ms, 2),
+                    memory_similarity=round(mem_lookup.semantic_similarity, 4),
+                    freshness_score=1.0,
+                    reuse_confidence=mem_lookup.entry.confidence if mem_lookup.entry else 0.90,
+                    reuse_decision=mem_lookup.reuse_decision.value,
+                    memory_bytes_reused=mem_lookup.entry.size_bytes if mem_lookup.entry else 0,
+                )
+                return InferenceResult(
+                    answer=cached_ans,
+                    route=RouteChoice.SMALL_MODEL.value,
+                    compute=0.0,
+                    cost=round(mem_lookup.lookup_cost_usd, 7),
+                    latency_ms=round(mem_lookup.lookup_latency_ms, 2),
+                    confidence=telemetry.confidence,
+                    trace=telemetry,
+                )
+
         plan = self.plan_execution(request)
 
         # If cascade mode is explicitly active and not on decision model
@@ -111,6 +184,38 @@ class ComputeController:
             route_str = plan.route.value
             model_name = plan.model
             escalated = False
+
+        latest_answer = res.get("answer", "")
+        # Cache admission
+        if mem_enabled and self.memory_hierarchy is not None and latest_answer:
+            from aeon.memory.types import MemoryRequest, MemoryScope, FreshnessPolicy, MemoryLevel
+            if mem_req is None:
+                freshness = FreshnessPolicy(request.consistency) if request.consistency else FreshnessPolicy.FRESH
+                mem_req = MemoryRequest(
+                    query=request.query,
+                    context=request.context,
+                    model_id=model_name,
+                    task_type=plan.task_type.value,
+                    scope=MemoryScope.GLOBAL,
+                    scope_id=request.session_id,
+                    freshness_policy=freshness,
+                )
+            self.memory_hierarchy.admit_and_store(
+                request=mem_req,
+                payload=latest_answer,
+                level=MemoryLevel.L4_SEMANTIC,
+                quality_estimate=0.90,
+                confidence=res.get("confidence", 0.90),
+                ttl_seconds=3600.0,
+            )
+            self.memory_hierarchy.admit_and_store(
+                request=mem_req,
+                payload=latest_answer,
+                level=MemoryLevel.L1_KV,
+                quality_estimate=0.90,
+                confidence=res.get("confidence", 0.90),
+                ttl_seconds=1800.0,
+            )
 
         # Build telemetry conforming to Section 20
         telemetry = Telemetry(

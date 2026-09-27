@@ -180,6 +180,64 @@ class VOIEstimator:
             next_reasoning_mode=next_reasoning,
         )
 
+    def estimate_memory_action(
+        self,
+        state: ComputeState,
+        lookup_result: Any,
+    ) -> VOIResult:
+        """
+        Evaluate marginal VOI for reusing cached computation versus recomputing.
+        Conforms to AEON Specification Section 11 & Section 30.
+        """
+        from aeon.memory.types import MemoryLevel, ReuseDecision
+
+        if not lookup_result.hit or lookup_result.reuse_decision == ReuseDecision.REJECT_REUSE:
+            return self._build_stop_result(
+                state,
+                reason=DecisionReason.CACHE_REJECTED_RISK,
+                marginal_utility=-0.01,
+            )
+
+        cached_q = lookup_result.entry.quality_estimate if lookup_result.entry else 0.90
+        current_q = state.current_quality_estimate
+        marginal_quality_gain = max(0.0, cached_q - current_q)
+
+        marginal_cost_usd = lookup_result.lookup_cost_usd
+        marginal_latency_ms = lookup_result.lookup_latency_ms
+        marginal_compute_flops = 0.0
+
+        resource_penalty = (
+            self.weights.lambda_latency * marginal_latency_ms
+            + self.weights.lambda_cost * marginal_cost_usd
+        )
+        marginal_utility = round((self.weights.quality * marginal_quality_gain) - resource_penalty + 0.15, 5)
+        voi_ratio = (marginal_quality_gain / marginal_cost_usd) if marginal_cost_usd > 0 else 999.0
+
+        is_safe = (lookup_result.reuse_decision == ReuseDecision.SAFE_REUSE)
+        action = ControllerAction.CACHE_HIT if is_safe else ControllerAction.VERIFY_CACHE
+        if lookup_result.level == MemoryLevel.L2_PREFIX:
+            action = ControllerAction.PARTIAL_CACHE_REUSE
+            reason = DecisionReason.PARTIAL_PREFIX_REUSE
+        else:
+            reason = DecisionReason.CACHE_HIT_SAFE if is_safe else DecisionReason.VERIFY_HIGH_UNCERTAINTY
+
+        return VOIResult(
+            action=action,
+            expected_current_quality=round(current_q, 4),
+            expected_future_quality=round(cached_q, 4),
+            marginal_quality_gain=marginal_quality_gain,
+            marginal_cost_usd=round(marginal_cost_usd, 7),
+            marginal_latency_ms=round(marginal_latency_ms, 2),
+            marginal_compute_flops=marginal_compute_flops,
+            marginal_utility=marginal_utility,
+            voi_ratio=round(voi_ratio, 2),
+            voi_threshold=self.voi_threshold,
+            is_economically_viable=True,
+            reason=reason,
+            next_model=None,
+            next_reasoning_mode=None,
+        )
+
     def predict_future_quality(
         self,
         state: ComputeState,

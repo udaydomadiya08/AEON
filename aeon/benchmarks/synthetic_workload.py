@@ -119,3 +119,131 @@ def generate_synthetic_workload(scale_factor: int = 1) -> List[InferenceRequest]
         for req in base_queries:
             workload.append(req.model_copy(deep=True))
     return workload
+
+
+def generate_repeated_workload(count: int = 50) -> List[InferenceRequest]:
+    """Workload A: Repeated exact requests (Section 23A)."""
+    base_query = "What is the capital of France and what is its primary river?"
+    return [
+        InferenceRequest(
+            query=base_query,
+            ground_truth="Paris, Seine",
+            task_hint="factual",
+            memory=True,
+        )
+        for _ in range(count)
+    ]
+
+
+def generate_shared_prefix_workload(count: int = 20) -> List[InferenceRequest]:
+    """Workload B: Shared-prefix workload with identical prompt headers (Section 23B)."""
+    system_prefix = (
+        "You are an expert financial analyst certified in quantitative valuation. "
+        "Analyze the provided corporate metrics using standard DCF and DuPont models. "
+    )
+    user_questions = [
+        "Calculate ROE given net income $5M and equity $25M.",
+        "Analyze the current ratio of 1.8 with $10M in current assets.",
+        "Compute debt-to-equity ratio if total liabilities are $40M and equity is $20M.",
+        "Estimate operating margin from EBIT of $3M on revenue of $15M.",
+        "What does an inventory turnover ratio of 6.0 indicate?",
+    ]
+    workload = []
+    for i in range(count):
+        q = user_questions[i % len(user_questions)]
+        workload.append(
+            InferenceRequest(
+                query=f"{system_prefix}{q}",
+                ground_truth="financial calculation",
+                task_hint="math",
+                memory=True,
+            )
+        )
+    return workload
+
+
+def generate_semantic_repetition_workload() -> List[List[InferenceRequest]]:
+    """Workload C: Different wording, same underlying question (Section 23C)."""
+    pairs = [
+        [
+            InferenceRequest(query="What is India's GDP in current US dollars?", ground_truth="$3.75T", task_hint="factual"),
+            InferenceRequest(query="How large is the Indian economy in dollars?", ground_truth="$3.75T", task_hint="factual"),
+        ],
+        [
+            InferenceRequest(query="What is the speed of light in vacuum?", ground_truth="299,792,458 m/s", task_hint="factual"),
+            InferenceRequest(query="How fast does light travel in empty space?", ground_truth="299,792,458 m/s", task_hint="factual"),
+        ],
+        [
+            InferenceRequest(query="Who developed the theory of general relativity?", ground_truth="Albert Einstein", task_hint="factual"),
+            InferenceRequest(query="Which physicist formulated general relativity?", ground_truth="Albert Einstein", task_hint="factual"),
+        ],
+    ]
+    return pairs
+
+
+def generate_temporal_workload() -> List[InferenceRequest]:
+    """Workload D: Frequently changing / time-sensitive information (Section 23D)."""
+    return [
+        InferenceRequest(query="What is the current stock price of TSLA right now?", task_hint="factual", consistency="STRICT"),
+        InferenceRequest(query="What is today's headline news in Tokyo?", task_hint="factual", consistency="STRICT"),
+        InferenceRequest(query="What is the current temperature in London right now?", task_hint="factual", consistency="STRICT"),
+    ]
+
+
+def generate_false_positive_pairs() -> List[Dict[str, Any]]:
+    """
+    Dedicated pairs for Section 27: Semantic cache false-positive experiment.
+    Similar phrasing or high token overlap, but critically DIFFERENT semantics/years/entities!
+    """
+    return [
+        {
+            "query_a": "What was Apple's revenue in 2024?",
+            "query_b": "What will Apple's revenue be in 2026?",
+            "is_semantically_equivalent": False,
+            "reason": "Temporal mismatch: 2024 historical vs 2026 forecast",
+        },
+        {
+            "query_a": "Who is the CEO of Microsoft?",
+            "query_b": "Who was the CEO of Microsoft in 2015?",
+            "is_semantically_equivalent": False,
+            "reason": "Temporal mismatch: current CEO vs 2015 CEO",
+        },
+        {
+            "query_a": "What is the capital of Australia?",
+            "query_b": "What is the capital of Austria?",
+            "is_semantically_equivalent": False,
+            "reason": "Entity mismatch: Australia (Canberra) vs Austria (Vienna)",
+        },
+        {
+            "query_a": "Calculate 15 * 12",
+            "query_b": "Calculate 15 * 18",
+            "is_semantically_equivalent": False,
+            "reason": "Numerical argument discrepancy",
+        },
+        {
+            "query_a": "What is the capital of France?",
+            "query_b": "What is the capital city of France?",
+            "is_semantically_equivalent": True,
+            "reason": "True semantic equivalence with near-identical phrasing",
+        },
+    ]
+
+
+def generate_phase3_mixed_workload(count: int = 30) -> List[InferenceRequest]:
+    """Workload G: Mixed workload combining easy, hard, repeated, semantic, prefix-heavy (Section 23G)."""
+    prefix = "Act as an intelligent compute assistant. Answer with precision: "
+    queries = [
+        InferenceRequest(query=f"{prefix}What is 2 + 2?", ground_truth="4", task_hint="math", memory=True),
+        InferenceRequest(query=f"{prefix}What is 2 + 2?", ground_truth="4", task_hint="math", memory=True),  # exact repeat
+        InferenceRequest(query=f"{prefix}Calculate two plus two", ground_truth="4", task_hint="math", memory=True),  # semantic repeat
+        InferenceRequest(query=f"{prefix}What is the capital of Canada?", ground_truth="Ottawa", task_hint="factual", memory=True),
+        InferenceRequest(query=f"{prefix}What is the capital city of Canada?", ground_truth="Ottawa", task_hint="factual", memory=True),
+        InferenceRequest(query=f"{prefix}Solve step-by-step: integral of 3x^2 dx", ground_truth="x^3 + C", task_hint="math", memory=True),
+        InferenceRequest(query=f"{prefix}What was Tesla's quarterly production in 2024?", ground_truth="469k", task_hint="factual", consistency="FRESH", memory=True),
+        InferenceRequest(query=f"{prefix}What will Tesla's quarterly production be in 2027?", ground_truth="Projection", task_hint="factual", consistency="STRICT", memory=True),
+    ]
+    out = []
+    for i in range(count):
+        out.append(queries[i % len(queries)].model_copy(deep=True))
+    return out
+
