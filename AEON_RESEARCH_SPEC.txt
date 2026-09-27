@@ -1,0 +1,2357 @@
+Maximum-Efficiency AI Architecture: A Comprehensive Research Investigation
+
+AEON Research Synthesis
+
+2026
+
+Table of Contents
+
+Maximum-Efficiency AI Architecture: A Comprehensive Research Investigation2
+
+Executive Summary2
+
+1. The AI Efficiency Problem: Formal Definition3
+
+2. Current LLM Bottlenecks (Ranked by Impact)3
+
+3. Complete Efficiency Landscape4
+
+4. Adaptive / Conditional Computation5
+
+5. Mixture-of-Experts and Sparse Models6
+
+6. Speculative Decoding7
+
+7. Latent Reasoning8
+
+8. Recurrent and Iterative Architectures9
+
+9. Attention Efficiency10
+
+10. KV-Cache Efficiency11
+
+11. Token Efficiency11
+
+12. Model Cascades and Routing12
+
+13. Decision Models / Jev13
+
+14. External Memory and Retrieval14
+
+15. Tool-Augmented Computation15
+
+16. Quantization and Model Compression15
+
+17. Early Exit and Adaptive Depth16
+
+18. Hierarchical / Multi-Scale Intelligence16
+
+19. World Models and Internal Simulation17
+
+20. Neuro-Symbolic Systems17
+
+21. Quantitative Comparison18
+
+22. Bottleneck Ranking (Updated with Evidence)19
+
+23. Compatibility Analysis: Finding Combinations19
+
+24. Proposed Unified Architecture: AEON20
+
+25. Research Novelty Analysis28
+
+26. Experimental Design30
+
+27. Benchmark Suite32
+
+28. Prototype Roadmap33
+
+29. Open Research Questions33
+
+30. Final Architecture Specification34
+
+31. Final Executive Question: What Architecture Should Be Built?36
+
+32. Conclusion37
+
+Maximum-Efficiency AI Architecture: A Comprehensive Research Investigation
+
+Executive Summary
+
+The quest for maximum useful intelligence per unit of computational resource requires fundamentally rethinking how AI systems allocate computation. Current LLMs waste enormous compute on autoregressive token generation for tasks that could be solved with cheaper operations, process all inputs uniformly regardless of difficulty, and generate verbose reasoning chains when compact latent computation would suffice. resources.rework
+
+This report synthesizes evidence from 100+ research papers (2024–2026) across adaptive computation, latent reasoning, speculative decoding, decision models, MoE architectures, attention alternatives, and hierarchical reasoning to propose AEON (Adaptive Economically-Optimized Network), a unified architecture that dynamically routes each inference through the cheapest capable computational path. arxiv
+
+Key findings: - Latent reasoning can reduce output tokens by 11×–87× with only 2–4% accuracy drops on reasoning benchmarks arxiv - Speculative decoding delivers 2–4× latency reduction on single-stream inference but degrades at high batch sizes and long contexts inference - Decision models (e.g., TypeSafe Jev) achieve 193× faster, 444× cheaper inference than frontier LLMs for classification/routing tasks byteiota - MoE models activate ~10× fewer parameters per token than dense equivalents while maintaining comparable capability arxiv - Adaptive test-time compute improves efficiency by 4× compared to uniform compute allocation resources.rework
+
+The proposed AEON architecture combines these techniques with a compute-budget controller that allocates inference resources based on estimated value-of-information, achieving an estimated 10–50× improvement in capability-per-dollar over standard dense LLM baselines.
+
+1. The AI Efficiency Problem: Formal Definition
+
+1.1 Why Benchmark Accuracy ≠ Efficiency
+
+Maximizing raw benchmark accuracy at unlimited compute is fundamentally different from maximizing intelligence per resource unit. A model that scores 95% on MMLU using 100B FLOPs per query is less efficient than one scoring 93% using 1B FLOPs—yet standard benchmarks reward only the former. resources.rework
+
+The efficiency objective must account for diminishing marginal returns on test-time compute. Recent work shows that on AIME 2024/2025, DeepSeek-R1-32B exhibits +3.2% accuracy per 500 tokens early in reasoning, but beyond 12K tokens, marginal utility becomes negative (overthinking degrades performance). lumiere-research
+
+1.2 Formal Objective Function
+
+The proposed efficiency metric:
+
+[  =  ]
+
+However, this requires refinement:
+
+Capability should be measured as task-weighted accuracy across a representative workload distribution, not peak performance on cherry-picked benchmarks. arxiv
+
+Cost must distinguish: - Active parameters (compute cost per forward pass) - Total parameters (memory footprint) - KV-cache size (memory bandwidth bottleneck) - Generated tokens (autoregressive latency) - Input tokens (prefill cost)
+
+Fundamental distinction: Total model capacity (parameters stored) ≠ active computation (FLOPs executed) ≠ useful computation (information gain per FLOP). arxiv
+
+A 405B-parameter MoE model may activate only 40B parameters per token, but if the routing overhead, memory bandwidth, and verification costs exceed the savings, the theoretical sparsity advantage vanishes in practice. arxiv
+
+2. Current LLM Bottlenecks (Ranked by Impact)
+
+Based on empirical evidence from systems research:
+
+Rank
+
+Bottleneck
+
+Evidence
+
+Estimated Impact
+
+1
+
+Autoregressive sequential decoding
+
+Token-by-token generation creates inherent latency floor; cannot parallelize output en.wikipedia
+
+10–100× latency overhead vs. single-pass
+
+2
+
+Excessive reasoning tokens
+
+Reasoning models generate 10–100× more tokens per query than needed; 60–80% are redundant arxiv
+
+5–20× token waste
+
+3
+
+Memory bandwidth (KV-cache)
+
+At long contexts, attention becomes memory-bound; KV-cache loading dominates latency arxiv
+
+2–10× slowdown at 128K+ context
+
+4
+
+Uniform compute allocation
+
+Easy and hard queries receive identical compute; 4× efficiency gain from adaptive allocation resources.rework
+
+2–4× waste on easy queries
+
+5
+
+Using generative models for deterministic tasks
+
+Classification, routing, ranking done via autoregressive generation when single-pass decision models suffice openrouter
+
+100–500× overhead
+
+6
+
+Quadratic attention complexity
+
+O(n²) attention becomes prohibitive at long contexts despite FlashAttention optimizations arxiv
+
+2–5× at 32K+ context
+
+7
+
+Repeated computation
+
+No semantic caching; identical subproblems recomputed across requests arxiv
+
+1.5–3× redundant compute
+
+8
+
+Inability to dynamically allocate compute
+
+Fixed-depth models cannot exit early on confident predictions link.springer
+
+1.5–3× on easy inputs
+
+3. Complete Efficiency Landscape
+
+3.1 Taxonomy of Efficiency Approaches
+
+Efficiency Dimension
+
+Technologies
+
+Primary Mechanism
+
+Maturity
+
+Representation
+
+Latent tokens, compressed CoT, semantic tokenization
+
+Reduce information density per token
+
+Emerging arxiv
+
+Parameter
+
+MoE, sparse activation, conditional computation
+
+Activate subset of parameters per token
+
+Production ibm
+
+Activation
+
+Early exit, adaptive depth, dynamic depth
+
+Skip layers on easy inputs
+
+Production link.springer
+
+Token
+
+Speculative decoding, multi-token prediction, token pruning
+
+Generate/verify multiple tokens per step
+
+Production en.wikipedia
+
+Reasoning
+
+Latent CoT, compressed reasoning, hidden-state thinking
+
+Perform computation in hidden states
+
+Emerging arxiv
+
+Memory
+
+KV-cache compression, quantization, eviction, prefix caching
+
+Reduce KV-cache size/bandwidth
+
+Production aclanthology
+
+Attention
+
+Sliding window, sparse, linear, block attention
+
+Reduce attention compute/memory
+
+Production arxiv
+
+Compute
+
+Quantization, distillation, pruning, low-rank adaptation
+
+Reduce FLOPs per forward pass
+
+Production aclanthology
+
+Latency
+
+Speculative decoding, decision models, early exit
+
+Reduce wall-clock time per query
+
+Production inference
+
+Energy
+
+All above + DVFS, hardware-aware scheduling
+
+Reduce Joules per query
+
+Emerging papers.academic-conferences
+
+Dollar
+
+Model cascades, routing, tool delegation
+
+Minimize cost per successful task
+
+Emerging arxiv
+
+Capability
+
+Test-time compute scaling, world models, neuro-symbolic
+
+Maximize accuracy per FLOP
+
+Emerging proceedings.iclr
+
+4. Adaptive / Conditional Computation
+
+4.1 Core Idea
+
+Adaptive computation dynamically scales inference effort based on input difficulty, allocating more compute to hard problems and less to easy ones. emergentmind
+
+4.2 Key Approaches
+
+Early Exit: Insert classifier heads at intermediate layers; exit when confidence exceeds threshold. link.springer
+
+DATEE (2026): Hierarchical trend sampling + adaptive threshold optimization; exits 40–60% of inputs at shallow layers with <1% accuracy loss link.springer
+
+Confidence-based rules: Stop when max probability > 0.9 or entropy < threshold emergentmind
+
+Consistency-based rules: Stop when predictions stabilize across layers arxiv
+
+Adaptive Depth / Mixture-of-Depths (MoD): Each layer routes tokens to either full computation or bypass path. openreview
+
+Tokens accumulate “halting values” across iterations; computation stops when cumulative halting ≥ 1 − ε openreview
+
+MoD reframes adaptive depth as token-level routing: router selects subset of tokens for full computation arxiv
+
+Dynamic Early Exit Prediction: Learned halting policies trained to predict optimal exit depth per input. emergentmind
+
+Expected cost: ( E[] = _{i=1}^{N} P( i) (i) ) emergentmind
+
+4.3 Computational Complexity
+
+Best case: O(1) layers for easy inputs
+
+Worst case: O(N) layers (full depth)
+
+Average case: O(αN) where α ∈ [0.3, 0.7] empirically link.springer
+
+4.4 Limitations
+
+Overconfidence: Intermediate classifiers often overconfident; requires calibration openaccess.thecvf
+
+Training complexity: Requires auxiliary losses for exit heads; may destabilize training arxiv
+
+Hardware inefficiency: Dynamic depth creates irregular computation patterns; difficult to batch efficiently emergentmind
+
+5. Mixture-of-Experts and Sparse Models
+
+5.1 Core Architecture
+
+MoE models partition parameters into expert subnetworks; a router activates only k experts per token. arxiv
+
+Key distinction: - Total parameters: Model capacity (e.g., 405B) - Active parameters: Compute cost per token (e.g., 40B) arxiv
+
+5.2 Empirical Evidence
+
+MoE models activate ~10× fewer parameters per token than dense equivalents while maintaining comparable performance arxiv
+
+At fixed active parameter counts, higher sparsity (lower density) consistently improves performance, but at very large active counts, GSM8K shifts optimum back toward dense models openreview
+
+MoNE (Mixture of Neuron Experts, 2025): Matches traditional MoE while activating only 50% of MoE-layer parameters arxiv
+
+5.3 Memory/Bandwidth Bottlenecks
+
+Total parameters can swell to 100× dense baseline, requiring more training data and high memory overhead arxiv
+
+Expert routing overhead and expert memory bandwidth can negate theoretical compute savings arxiv
+
+MoE achieves memory efficiency only when active parameter counts and expert configurations are carefully tuned arxiv
+
+5.4 Where MoE Fails
+
+Small models (<7B): Routing overhead dominates; dense models more efficient openreview
+
+Very high sparsity: Requires proportionally more training data; may not converge arxiv
+
+Memory-bound workloads: Expert loading from HBM becomes bottleneck arxiv
+
+6. Speculative Decoding
+
+6.1 Core Mechanism
+
+A fast draft model proposes K tokens; the target model verifies all K in one forward pass. Accepted tokens are emitted; rejected tokens trigger resampling. aiwiki
+
+Per-token latency: [ {}  ] where ( t_s ) = draft latency, ( t) = target verification latency, ( K ) = tokens per speculation, ( ) = acceptance rate emergentmind
+
+6.2 Variants and Benchmarks
+
+Method
+
+Speedup
+
+Lossless
+
+Draft Source
+
+Extra Training
+
+Memory Overhead
+
+Classic SD
+
+1.5–2.5×
+
+Yes
+
+Separate draft model
+
+No
+
+High (2 models) en.wikipedia
+
+Medusa-1
+
+2.2–3.6×
+
+Yes
+
+Extra prediction heads
+
+Yes (heads)
+
+Minimal morphllm
+
+EAGLE
+
+2.7–3.5×
+
+Yes
+
+Target model features (layer -2)
+
+Yes (predictor)
+
+Minimal en.wikipedia
+
+EAGLE-2
+
+~3.8×
+
+Yes
+
+Multi-level features
+
+Yes
+
+Minimal inference
+
+EAGLE-3
+
+3.0–6.5×
+
+Yes
+
+Dynamic tree speculation
+
+Yes
+
+Minimal arxiv
+
+Self-speculative (sparse)
+
+1.15–1.29×
+
+Yes
+
+Sparse attention draft
+
+No
+
+Low arxiv
+
+Real benchmarks: - SGLang + EAGLE-3 on H100: 373 tokens/s vs. 158 tokens/s vanilla (2.36×) aiwiki - EAGLE on LLaMA-2-70B: 2.7–3.5× latency reduction en.wikipedia - Spec-Bench: EAGLE achieves 1.8–2.4× across subtasks; 2.4× on math reasoning sites.google
+
+6.3 When Speculative Decoding Fails
+
+Critical limitations (empirically measured):
+
+High batch sizes: At batch >32, speedup degrades to 1.0× or negative; workload becomes compute-bound arxiv
+
+Long contexts: EAGLE-3 slows down by 0.81× at 128K context; KV-cache loading dominates arxiv
+
+Agent workloads: Existing SD methods become slower than autoregressive decoding at large batches for agentic tasks arxiv
+
+Throughput-bound workloads: SD adds verification overhead to already compute-bound processes (large-scale RL, offline generation) arxiv
+
+Low acceptance rate: If draft accuracy <70%, speedup vanishes emergentmind
+
+Theoretical upper bound: Existing methods fall far short of theoretical speedup limits; draft model latency is the key bottleneck www2.eecs.berkeley
+
+7. Latent Reasoning
+
+7.1 Core Idea
+
+Latent reasoning performs multi-step inference in continuous hidden states rather than generating explicit token-level reasoning chains. arxiv
+
+Explicit CoT: Input → tokens → tokens → tokens → answer (all reasoning visible)
+
+Latent CoT: Input → hidden computational states → answer (reasoning compressed) arxiv
+
+7.2 Key Approaches
+
+Compressed Latent Reasoning (CoLaR): Two-stage training compresses reasoning into latent tokens via VQ-VAE or continuous representations. ar5iv.labs.arxiv
+
+OneLatent (2026): Compresses intermediate reasoning into single latent token via supervision from rendered CoT images and hidden states. arxiv - Reduces average output length by 11× (74.62 → 6.78 tokens) - Accuracy drop: only 2.21% macro-averaged - Output Token Contribution (OTC) improved 6.8× - On long-chain logical reasoning: 87.4× compression with 99.8% accuracy on ProntoQA arxiv
+
+SPOT (Span-level Pause-of-Thought, 2026): Hybrid explicit/latent reasoning with semantic interpretations. arxiv - Improves accuracy by 2.3 points average - Reduces generated tokens by 37.5% - On AIME2025: +3.3 points accuracy with 15.8% fewer tokens - On GPQA-Diamond: +4.5 points with 49.3% output length reduction arxiv
+
+Latent-SFT (2025): Defines latent tokens within vocabulary column space. arxiv - Matches explicit SFT on GSM8k - Cuts reasoning chains by up to 4× arxiv
+
+Heima (Hidden Llama, 2025): Condenses lengthy CoTs into small set of abstract thinking tokens. arxiv
+
+7.3 Computational Benefits
+
+Metric
+
+Explicit CoT
+
+Latent CoT
+
+Improvement
+
+Generated tokens
+
+74.6 avg
+
+6.8 avg
+
+11× reduction arxiv
+
+KV-cache growth
+
+O(reasoning_length)
+
+O(1)
+
+10–87× reduction arxiv
+
+Latency
+
+O(tokens × model_forward)
+
+O(1–10 model_forwards)
+
+5–20× potential arxiv
+
+Reasoning depth per token
+
+1 step/token
+
+Multiple steps/token
+
+Unbounded arxiv
+
+7.4 Limitations
+
+Interpretability loss: Cannot inspect reasoning trace for debugging/verification arxiv
+
+Training complexity: Requires distillation from explicit CoT or specialized objectives arxiv
+
+Capability ceiling: On hardest reasoning tasks, explicit CoT still outperforms latent methods by 2–5 points arxiv
+
+8. Recurrent and Iterative Architectures
+
+8.1 Recurrent Transformers / Universal Transformers
+
+Apply same transformer layers recurrently across time steps rather than stacking distinct layers. arxiv
+
+Adaptive depth: Can halt early per token based on halting probability openreview
+
+Parameter efficiency: N layers with recurrence = O(N) depth with O(1) parameters arxiv
+
+8.2 State Space Models (Mamba Family)
+
+Mamba (2024): Selective state space mechanism with O(N) inference complexity. sci.utah
+
+Mamba-2 (2025): Improved selectivity and hardware efficiency; outperforms Mamba-1 on both performance and efficiency sci.utah
+
+Mamba-3 (2026): Increases decoding FLOPs by up to 4× vs. Mamba-2 at fixed state size while maintaining similar wall-clock latency; improves perplexity and downstream performance arxiv
+
+Complexity comparison: arxiv
+
+Architecture
+
+Training FLOPs
+
+Inference FLOPs
+
+KV-Cache Memory
+
+Transformer (FlashAttention)
+
+O(L²N)
+
+O(LN)
+
+O(LN)
+
+Mamba-1
+
+O(LN²)
+
+O(N²)
+
+O(N)
+
+Mamba-2
+
+O(LN²)
+
+O(N²)
+
+O(N)
+
+Mamba-3
+
+O(LN²)
+
+O(N²)
+
+O(N)
+
+where L = sequence length, N = state dimension
+
+Empirical findings: - Mamba competitive with transformers on sentence/paragraph-level tasks sci.utah - Mamba struggles with longer inputs; sensitive to training distribution’s sequence length aclanthology - Mamba less efficient than transformers with FlashAttention in practice despite better theoretical complexity sci.utah - Hybrid architectures (Mamba2 backbone + windowed attention) converge fastest; require 10× less data than standalone SSMs arxiv - Jamba-1.5: 9 GB cache at 256K context vs. 80 GB for comparable Transformer arxiv - Hymba: 11× cache reduction vs. 3B Transformer arxiv
+
+Hardware reality: SSMs are less efficient than transformers with I/O-aware optimization (FlashAttention) on current GPUs; theoretical O(N) advantage negated by poor GPU utilization sci.utah
+
+9. Attention Efficiency
+
+9.1 Sparse Attention Variants
+
+Variant
+
+Complexity
+
+Mechanism
+
+Use Case
+
+Sliding window
+
+O(N × w)
+
+Each query attends to w neighbors
+
+Long-context generation arxiv
+
+Block attention
+
+O((N/b)² × b²)
+
+Attend within fixed blocks
+
+Document understanding arxiv
+
+Grouped attention
+
+O(N × g)
+
+Queries grouped into g clusters
+
+Memory-constrained inference arxiv
+
+Linear attention
+
+O(N)
+
+Kernel approximation or recurrent formulation
+
+Streaming/online inference arxiv
+
+9.2 Empirical Performance
+
+FlashAttention: 2–4× speedup, 10–20× memory reduction via IO-aware tiling arxiv
+
+Sparse self-speculative decoding: 1.15–1.29× speedup; works best for long-context throughput-oriented serving arxiv
+
+Linear attention: Competitive on language modeling but underperforms on exact retrieval/associative recall arxiv
+
+9.3 Attention Sinks and Token Pruning
+
+Attention sinks: Certain tokens (e.g., initial tokens) receive disproportionate attention; can be exploited for pruning arxiv
+
+Token merging: Merge similar tokens to reduce sequence length; 20–40% reduction with <1% accuracy loss arxiv
+
+10. KV-Cache Efficiency
+
+10.1 Techniques
+
+Technique
+
+Mechanism
+
+Memory Reduction
+
+Accuracy Impact
+
+KV-cache quantization
+
+INT8/FP8 KV-cache
+
+2–4×
+
+<1% aclanthology
+
+KV-cache compression
+
+Low-rank decomposition
+
+2–5×
+
+1–3% attention-survey.github
+
+KV-cache pruning
+
+Evict low-attention tokens
+
+2–10×
+
+2–5% arxiv
+
+Prefix caching
+
+Reuse KV for repeated prefixes
+
+1.5–3× (workload-dependent)
+
+0% arxiv
+
+Semantic KV compression
+
+Compress semantically similar tokens
+
+3–5×
+
+1–2% arxiv
+
+10.2 Long-Context Reality
+
+Quantization degrades long-input retrieval performance; drops worsen with input length arxiv
+
+4-bit quantization: up to 59% accuracy drop on long-context tasks; 23% average drop at 128K tokens aclanthology
+
+8-bit quantization: ~0.8% average drop; FP8 and GPTQ-int8 show 0.2% and 0.8% drops respectively aclanthology
+
+11. Token Efficiency
+
+11.1 Approaches
+
+Approach
+
+Mechanism
+
+Token Reduction
+
+Capability Impact
+
+Better tokenizers
+
+BPE optimization, semantic tokenization
+
+10–20%
+
+0% arxiv
+
+Multi-token prediction
+
+Predict 2–8 tokens per step
+
+2–8× throughput
+
+0% (lossless) aiwiki
+
+Hierarchical tokens
+
+Coarse-to-fine token representations
+
+2–5×
+
+<2% arxiv
+
+Thought compression
+
+Compress reasoning into latent tokens
+
+4–87×
+
+2–5% arxiv
+
+Context compression
+
+Summarize/encode long contexts
+
+5–20×
+
+3–10% arxiv
+
+11.2 Should AI Use Natural-Language Tokens?
+
+Evidence suggests no for internal computation: - OneLatent achieves 99.8% accuracy on ProntoQA with 1 latent token vs. 74+ text tokens arxiv - Latent-SFT matches explicit CoT performance with 4× fewer tokens arxiv - Natural-language tokens are for communication, not optimal computation arxiv
+
+12. Model Cascades and Routing
+
+12.1 Core Principle
+
+Use the cheapest model capable of solving the current problem. lumiere-research
+
+Expected cost model: [ E[] = _{i} P( i) (i) + P()  ]
+
+12.2 Routing Strategies
+
+Strategy
+
+Mechanism
+
+Accuracy
+
+Cost Savings
+
+Confidence routing
+
+Route based on small-model confidence
+
+95–98% of oracle
+
+3–10× arxiv
+
+Semantic routing
+
+Classifier predicts difficulty/domain
+
+90–95% of oracle
+
+2–5× arxiv
+
+Uncertainty estimation
+
+Route high-uncertainty to larger models
+
+97–99% of oracle
+
+2–4× arxiv
+
+Learned inference policies
+
+RL-trained router optimizes cost/accuracy
+
+98–99.5% of oracle
+
+4–15× arxiv
+
+12.3 Empirical Evidence
+
+Compute-optimal test-time scaling: Adaptive allocation improves efficiency by 4× vs. uniform allocation resources.rework
+
+Snell et al. (ICLR 2025): Smaller model with adaptive test-time compute outperforms 14× larger model on hard reasoning resources.rework
+
+13. Decision Models / Jev
+
+13.1 What is Jev?
+
+TypeSafe Jev is a non-autoregressive decision model that returns typed answers (choices, scores, calibrated probabilities) instead of text. byteiota
+
+Key characteristics: - Non-autoregressive: Generates all outputs in single parallel pass byteiota - Typed schema: User defines answer schema upfront; Jev returns schema-valid answers byteiota - Calibrated probabilities: Each answer carries probability via RLCD (Reinforcement Learning for Calibrated Decisions) beri - 193× faster, 444× cheaper than frontier LLMs for classification tasks byteiota
+
+13.2 Input/Output Representation
+
+Input: Text passage + typed question schema
+
+Output: - Choice: One of N predefined options with probability - Score: Continuous score with confidence interval[0][1] - Noul: Structured output with multiple typed fields openrouter
+
+13.3 Where Decision Models Excel
+
+Classification, routing, ranking, verification, confidence estimation, tool selection, action selection, stopping decisions byteiota
+
+Agent orchestration: Route to appropriate tool/model based on classified intent beri
+
+13.4 Where They Fail
+
+Open-ended generation (creative writing, code synthesis, explanation)
+
+Multi-step reasoning requiring intermediate representations
+
+Tasks without predefined answer schema byteiota
+
+13.5 Generalization: Specialized Computational Primitives
+
+Which cognitive operations should NOT use autoregressive generation?
+
+Operation
+
+Better Primitive
+
+Rationale
+
+Classification
+
+Decision model (Jev-like)
+
+Single-pass, calibrated, 100–500× cheaper byteiota
+
+Routing
+
+Learned router / decision model
+
+Deterministic, low-latency arxiv
+
+Ranking
+
+Score-based decision model
+
+Parallel scoring, calibrated openrouter
+
+Verification
+
+Verifier model / PRM
+
+Single-pass confidence estimation arxiv
+
+Confidence estimation
+
+Calibrated decision head
+
+Non-autoregressive, accurate github
+
+Memory retrieval
+
+Learned retrieval / RAG
+
+Cheaper than generating from weights emergentmind
+
+Tool selection
+
+Classifier / decision model
+
+Schema-constrained, fast beri
+
+Action selection
+
+Decision model with action schema
+
+Parallel, calibrated beri
+
+Stopping decisions
+
+Halting policy / early exit head
+
+Learned from value-of-compute link.springer
+
+Reasoning-depth selection
+
+Compute controller (VOI-based)
+
+Economically rational allocation arxiv
+
+14. External Memory and Retrieval
+
+14.1 RAG and Retrieval-Native Architectures
+
+Core question: Is it cheaper to store knowledge outside model parameters and retrieve on demand?
+
+Evidence: - Hierarchical RAG: Multi-level retrieval reduces noise and supports multi-hop reasoning; 2–5× cost reduction vs. naive RAG emergentmind - Retrieval cost: ~$0.0001 per query vs. $0.001–$0.01 for LLM generation of same knowledge arxiv
+
+14.2 External vs. Internal Memory
+
+Storage
+
+Cost
+
+Latency
+
+Accuracy
+
+Use Case
+
+In weights
+
+High (training cost amortized)
+
+Low (single forward pass)
+
+High (parametric knowledge)
+
+Core reasoning, generalization
+
+External memory (RAG)
+
+Low (retrieval API calls)
+
+Medium (retrieval + generation)
+
+High (grounded facts)
+
+Factual knowledge, long-tail info
+
+Semantic cache
+
+Very low (cache hit)
+
+Very low (cache lookup)
+
+High (exact match)
+
+Repeated queries, common patterns arxiv
+
+14.3 Neural Memory Architectures
+
+Key-value memory: Differentiable memory with read/write heads; O(1) access to stored facts arxiv
+
+Episodic memory: Store past interactions for retrieval; improves consistency and personalization emergentmind
+
+Learned retrieval: Train retrieval policy jointly with generation; 20–40% improvement over BM25 emergentmind
+
+15. Tool-Augmented Computation
+
+15.1 Delegate Deterministic Computation
+
+Task
+
+LLM Generation
+
+Tool Execution
+
+Efficiency Gain
+
+Arithmetic
+
+Token-heavy, error-prone
+
+Calculator API
+
+10–100× scribd
+
+Code execution
+
+Slow, hallucination risk
+
+Sandbox execution
+
+5–50× scribd
+
+Database queries
+
+Imprecise, verbose
+
+SQL API
+
+10–100× scribd
+
+Search
+
+Outdated knowledge
+
+Search API
+
+2–10× scribd
+
+Symbolic algebra
+
+Error-prone
+
+SymPy/Wolfram
+
+10–100× scribd
+
+Theorem proving
+
+Intractable
+
+Formal prover
+
+100–1000× scribd
+
+15.2 When NOT to Use Neural Generation
+
+Deterministic computations: Arithmetic, sorting, database lookups scribd
+
+Precise symbolic reasoning: Formal verification, theorem proving scribd
+
+Large-scale simulation: Physics, economics, game theory scribd
+
+Exact retrieval from structured data: SQL, graph queries scribd
+
+16. Quantization and Model Compression
+
+16.1 Quantization Methods
+
+Method
+
+Precision
+
+Size vs. FP16
+
+Accuracy Drop
+
+Use Case
+
+FP8
+
+8-bit float
+
+50%
+
+0.2–1%
+
+Training & inference aclanthology
+
+INT8 (W8A8)
+
+8-bit int
+
+50%
+
+0.5–2%
+
+Inference (production sweet spot) developers.redhat
+
+INT4 (W4A16)
+
+4-bit int
+
+25%
+
+1–3% (70B+), 5–10% (<7B)
+
+Memory-constrained inference ijcai
+
+AWQ
+
+4-bit int
+
+25%
+
+1–2%
+
+Large models (70B+) jcst.ict.ac
+
+GPTQ
+
+4-bit int
+
+25%
+
+2–5% (small), 1–3% (large)
+
+General compression aclanthology
+
+SmoothQuant
+
+8-bit int
+
+50%
+
+1–3%
+
+Large models (405B) arxiv
+
+16.2 Empirical Findings
+
+FP8 and GPTQ-int8: 0.2% and 0.8% average drops respectively; robust across tasks aclanthology
+
+4-bit quantization: Up to 59% accuracy drop on long-context tasks; 23% average drop at 128K tokens aclanthology
+
+Smaller models (<7B): 4-bit quantization leads to significant drops, especially with GPTQ ijcai
+
+Larger models (70B+): More resilient; INT4 competitive with INT8 arxiv
+
+W4A4 quantization: Still struggles to achieve lossless performance, especially for 1–7B models arxiv
+
+16.3 Energy Savings
+
+Quantization provides substantial energy savings with acceptable trade-offs; larger models show increased resilience to quantization-induced degradation papers.academic-conferences
+
+17. Early Exit and Adaptive Depth
+
+(See Section 4 for detailed coverage)
+
+Key insight: Modern reasoning models can dynamically decide “I have computed enough” via confidence-based or learned halting policies. link.springer
+
+Combination potential: Early exit + latent reasoning + decision models creates multiplicative efficiency gains: - Early exit reduces depth - Latent reasoning reduces tokens per layer - Decision models replace generation for sub-tasks byteiota
+
+18. Hierarchical / Multi-Scale Intelligence
+
+18.1 Hierarchical Reasoning Model (HRM)
+
+Architecture: Brain-inspired multi-level processing with coarse-to-fine temporal/conceptual granularity. arxiv
+
+Mechanism: - High-level module operates at coarser granularity, generating latent representations - Low-level module operates at finer resolution, guided by high-level latents - Enables longer reasoning chains without proportionally longer output sequences arxiv
+
+Benefits: - Substantial computational depth without training instability arxiv - Dynamic compute allocation: more compute to harder problems envisioning - Structured decomposition: planning → reasoning → verification at different levels ibm
+
+18.2 Hierarchical Reasoning Abstraction
+
+Systematic organization of reasoning into multiple abstraction levels; higher levels aggregate/generalize from lower levels. emergentmind
+
+Applications: - Multi-hop reasoning across granularities emergentmind - Scalable, interpretable problem-solving emergentmind
+
+19. World Models and Internal Simulation
+
+19.1 Core Idea
+
+Instead of generating language chains, simulate possible world states and plan within the simulation. openreview
+
+Model-Based RL pipeline: 1. Learn dynamics model ( _) (transition model) 2. Plan action sequences inside learned simulator 3. Train policy on imagined rollouts arxiv
+
+19.2 Benefits
+
+Sample efficiency: Learn policies in imagination, amortizing real interaction cost openreview
+
+Long-horizon planning: Simulate consequences of actions without expensive real-world trials openreview
+
+Grounded reasoning: Bridge language-based reasoning with policy learning openreview
+
+19.3 Limitations
+
+Simulation error accumulation: Imperfect world models diverge from reality over long horizons arxiv
+
+Training complexity: Requires environment interaction or high-quality demonstrations openreview
+
+Domain specificity: World models are task-specific; cannot generalize across domains like LLMs mn.cs.tsinghua.edu
+
+20. Neuro-Symbolic Systems
+
+20.1 Core Idea
+
+Combine neural perception with symbolic reasoning; use neural nets for pattern recognition, symbolic systems for deterministic reasoning. scribd
+
+Why not rediscover deterministic rules neurally? - Symbolic systems guarantee correctness for formal reasoning - Neural nets waste compute relearning arithmetic, logic, grammar scribd
+
+20.2 Approaches
+
+Approach
+
+Mechanism
+
+Use Case
+
+Neural theorem proving
+
+Neural guidance + formal proof search
+
+Mathematics, verification scribd
+
+Program synthesis
+
+Generate executable code, run to verify
+
+Code generation, reasoning scribd
+
+Executable reasoning
+
+Generate programs that compute answers
+
+Math, logic, structured reasoning scribd
+
+Formal verification
+
+Prove properties of neural outputs
+
+Safety-critical systems scribd
+
+20.3 Efficiency Gains
+
+Program execution: 10–100× more efficient than neural generation for arithmetic/symbolic reasoning scribd
+
+Formal verification: Guarantees correctness; avoids expensive neural sampling scribd
+
+21. Quantitative Comparison
+
+Architecture
+
+Quality (MMLU)
+
+Tokens/Query
+
+FLOPs/Query
+
+Latency (ms)
+
+Memory (GB)
+
+Energy (J)
+
+Cost ($/1K queries)
+
+Maturity
+
+Dense LLM (70B)
+
+85%
+
+500
+
+140B
+
+2000
+
+140
+
+50
+
+$5.00
+
+Production scribd
+
+MoE LLM (405B, 40B active)
+
+88%
+
+500
+
+80B
+
+1500
+
+405
+
+30
+
+$3.00
+
+Production arxiv
+
+Small-model cascade (7B→70B)
+
+84%
+
+400
+
+30B (avg)
+
+800
+
+70
+
+15
+
+$1.50
+
+Emerging arxiv
+
+Speculative decoding (EAGLE-3)
+
+85%
+
+500
+
+60B (effective)
+
+600
+
+140
+
+20
+
+$2.00
+
+Production aiwiki
+
+Latent reasoning (OneLatent)
+
+83%
+
+50
+
+20B
+
+300
+
+70
+
+8
+
+$0.80
+
+Emerging arxiv
+
+Decision model (Jev)
+
+N/A (classification)
+
+1
+
+0.2B
+
+10
+
+1
+
+0.5
+
+$0.01
+
+Production byteiota
+
+RAG + 7B LLM
+
+82% (grounded)
+
+200
+
+15B
+
+500
+
+20
+
+10
+
+$0.50
+
+Production scribd
+
+AEON (proposed)
+
+86% (est.)
+
+100
+
+25B (avg)
+
+400
+
+100
+
+12
+
+$1.00 (est.)
+
+Research
+
+Notes: - DATA NOT AVAILABLE for energy measurements in many cases; estimates based on FLOPs and hardware specs arxiv - Quality metrics not directly comparable across architectures (different evaluation protocols) - Cost estimates based on reported pricing and compute requirements arxiv
+
+22. Bottleneck Ranking (Updated with Evidence)
+
+Autoregressive sequential decoding — Fundamental latency floor; 10–100× overhead vs. single-pass byteiota
+
+Excessive reasoning tokens — 60–80% redundant; 5–20× waste arxiv
+
+Memory bandwidth (KV-cache) — Dominates at long contexts; 2–10× slowdown arxiv
+
+Uniform compute allocation — 4× efficiency gain from adaptive allocation resources.rework
+
+Generative models for deterministic tasks — 100–500× overhead byteiota
+
+Quadratic attention — 2–5× at 32K+ context arxiv
+
+Repeated computation — 1.5–3× redundant compute arxiv
+
+Fixed-depth models — 1.5–3× on easy inputs emergentmind
+
+23. Compatibility Analysis: Finding Combinations
+
+23.1 High-Compatibility Combinations
+
+Combination
+
+Compatibility
+
+Conflicts
+
+Redundancy
+
+Expected Benefit
+
+Engineering Difficulty
+
+Adaptive Routing + Jev + Latent Reasoning
+
+High
+
+None
+
+Low
+
+20–50× efficiency gain
+
+Medium arxiv
+
+Speculative Decoding + MoE + KV Compression
+
+Medium
+
+SD degrades at high batch; MoE routing overhead
+
+Medium
+
+5–15× latency reduction
+
+High arxiv
+
+Early Exit + Latent Reasoning + Decision Models
+
+High
+
+None
+
+Low
+
+10–30× token reduction
+
+Medium arxiv
+
+Model Cascade + Tool Delegation + RAG
+
+High
+
+None
+
+Low
+
+10–100× cost reduction
+
+Low scribd
+
+Hierarchical Reasoning + World Models + Neuro-Symbolic
+
+Medium
+
+Training complexity, domain specificity
+
+Medium
+
+5–20× reasoning depth
+
+Very High arxiv
+
+23.2 Multiplicative (Not Additive) Combinations
+
+Adaptive Routing + Latent Reasoning + Decision Models: - Routing avoids expensive models on easy tasks - Latent reasoning reduces tokens per hard task - Decision models replace generation for classification/routing - Combined effect: 20–50× efficiency gain (not 5× + 10× + 100× = 115×, but synergistic) byteiota
+
+Speculative Decoding + Early Exit + Quantization: - SD reduces latency per token - Early exit reduces tokens needed - Quantization reduces FLOPs per forward pass - Combined effect: 10–30× throughput improvement aiwiki
+
+23.3 Conflicting Combinations
+
+Speculative Decoding + Large Batch Sizes: - SD speedup degrades to 1.0× or negative at batch >32 arxiv - Resolution: Use SD only for latency-oriented (low-batch) workloads; switch to standard decoding for throughput-oriented workloads arxiv
+
+MoE + Extreme Quantization (4-bit): - MoE already memory-efficient; 4-bit quantization may degrade routing accuracy ijcai - Resolution: Use 8-bit quantization for MoE; reserve 4-bit for dense small models arxiv
+
+24. Proposed Unified Architecture: AEON
+
+24.1 Architecture Name
+
+AEON (Adaptive Economically-Optimized Network)
+
+24.2 Core Principle
+
+Economically rational inference: Every inference begins with a compute budget; the system dynamically allocates budget across routing, retrieval, reasoning, verification, and generation based on estimated value-of-information (VOI). lumiere-research
+
+[  =  ]
+
+Continue reasoning only while (  >  ). lumiere-research
+
+24.3 Full Architecture Diagram
+
+                         INPUT                           │                           ▼                 ┌──────────────────┐                 │ TASK ANALYZER    │ (Decision model: classify task type, difficulty)                 └────────┬─────────┘                          │                          ▼                 ┌──────────────────┐                 │ COMPUTE BUDGET   │ (Allocate budget based on task type, SLA, cost constraints)                 │   CONTROLLER     │                 └────────┬─────────┘                          │             ┌────────────┼────────────┐             ▼            ▼            ▼          SIMPLE       MEDIUM       COMPLEX             │            │            │             ▼            ▼            ▼        DECISION      SMALL LLM    LARGE MoE          MODEL       (INT8)      (FP8, sparse)             │            │            │             │            ▼            ▼             │     ┌─────────────────────┐             │     │  REASONING MODE     │             │     │  CONTROLLER         │             │     └──────────┬──────────┘             │                │             │       ┌────────┴────────┐             │       ▼                 ▼             │  LATENT REASONING   EXPLICIT CoT             │  (compressed CoT)   (full CoT)             │       │                 │             │       └────────┬────────┘             │                ▼             │         VERIFICATION             │         (Decision model: confidence check)             │                │             ▼                ▼         ┌────────────────────────────┐         │   OUTPUT + CALIBRATION     │         └────────────────────────────┘
+
+Improved architecture (incorporating literature):
+
+                         INPUT                           │                           ▼                 ┌──────────────────┐                 │ SEMANTIC CACHE   │ (Check if query answered recently)                 └────────┬─────────┘                          │ (miss)                          ▼                 ┌──────────────────┐                 │ TASK ANALYZER    │ (Jev-like decision model)                 │ - Task type      │                 │ - Difficulty     │                 │ - Uncertainty    │                 └────────┬─────────┘                          │                          ▼                 ┌──────────────────┐                 │ BUDGET ALLOCATOR │ (VOI-based compute allocation)                 │ Budget = f(SLA, cost, difficulty)                 └────────┬─────────┘                          │             ┌────────────┼────────────┬────────────┐             ▼            ▼            ▼            ▼          ROUTE        RETRIEVE     REASON       GENERATE        (Jev)          (RAG)      (Latent/     (Speculative                                    Explicit)     Decoding)             │            │            │            │             │            │     ┌──────┴──────┐     │             │            │     ▼             ▼     │             │            │  LATENT        EXPLICIT │             │            │  (4–87× tokens) (CoT)   │             │            │     │             │     │             │            │     └──────┬──────┘     │             │            │            ▼            │             │            │     VERIFICATION        │             │            │     (Decision model)    │             │            │            │            │             └────────────┴────────────┴────────────┘                          │                          ▼                 ┌──────────────────┐                 │ OUTPUT + LOG     │ (Cache result, log compute usage)                 └──────────────────┘
+
+24.4 Components
+
+Component
+
+Technology
+
+Role
+
+Semantic Cache
+
+Key-value store with semantic hashing
+
+Avoid recomputation on repeated queries arxiv
+
+Task Analyzer
+
+Jev-like decision model
+
+Classify task type, difficulty, uncertainty in single pass byteiota
+
+Budget Allocator
+
+VOI-based controller
+
+Allocate compute budget across routing, retrieval, reasoning, generation arxiv
+
+Router
+
+Learned router / decision model
+
+Route to cheapest capable model arxiv
+
+Retriever
+
+Hierarchical RAG
+
+Fetch relevant knowledge from external memory emergentmind
+
+Reasoning Mode Controller
+
+Confidence-based selector
+
+Choose latent vs. explicit reasoning based on difficulty arxiv
+
+Latent Reasoning Engine
+
+OneLatent / CoLaR / SPOT
+
+Compress reasoning into latent tokens arxiv
+
+Explicit CoT Engine
+
+Standard reasoning LLM
+
+Full chain-of-thought for hardest tasks arxiv
+
+Verification
+
+Calibrated decision model
+
+Check answer confidence; trigger escalation if uncertain github
+
+Speculative Decoder
+
+EAGLE-3 / Medusa
+
+Accelerate generation on complex outputs aiwiki
+
+Output + Logger
+
+—
+
+Emit answer, cache result, log compute usage for learning arxiv
+
+24.5 Data Flow
+
+Input → Semantic cache lookup (hit: return cached answer; miss: continue)
+
+Task Analyzer classifies task type (classification, reasoning, generation), difficulty (easy/medium/hard), uncertainty (low/medium/high)
+
+Budget Allocator computes compute budget based on:
+
+SLA (latency requirement)
+
+Cost constraints ($/query budget)
+
+Task difficulty (from Task Analyzer)
+
+Historical performance (from logs)
+
+Router selects model path:
+
+Easy + classification → Decision model only
+
+Easy + simple reasoning → Small LLM (INT8) + latent reasoning
+
+Medium + complex reasoning → Large MoE (FP8) + latent reasoning
+
+Hard + complex reasoning → Large MoE (FP8) + explicit CoT + verification
+
+Retriever (optional): If task requires external knowledge, fetch from hierarchical RAG
+
+Reasoning Mode Controller selects latent vs. explicit reasoning based on difficulty and budget
+
+Reasoning Engine executes reasoning (latent or explicit)
+
+Verification checks answer confidence; if low confidence, escalate to more expensive path
+
+Output emitted, result cached, compute usage logged
+
+24.6 Inference Algorithm
+
+def aeon_inference(query, sla_latency, cost_budget):    # Step 1: Semantic cache    cached = semantic_cache.lookup(query)    if cached:        return cached.answer        # Step 2: Task analysis (decision model, single pass)    task_type, difficulty, uncertainty = task_analyzer.predict(query)        # Step 3: Budget allocation (VOI-based)    budget = budget_allocator.allocate(        task_type=task_type,        difficulty=difficulty,        uncertainty=uncertainty,        sla=sla_latency,        cost_limit=cost_budget    )        # Step 4: Routing    if task_type == "classification" and difficulty == "easy":        # Decision model only        answer, confidence = decision_model.predict(query)        if confidence > 0.9:            semantic_cache.store(query, answer)            return answer        else:            # Escalate to LLM            pass        # Step 5: Retrieval (if needed)    if task_type in ["reasoning", "generation"] and requires_knowledge(query):        context = hierarchical_rag.retrieve(query, budget.retrieval)    else:        context = None        # Step 6: Reasoning mode selection    if difficulty == "hard" or uncertainty == "high":        reasoning_mode = "explicit"        model = large_moe_fp8    elif difficulty == "medium":        reasoning_mode = "latent"        model = large_moe_fp8    else:  # easy        reasoning_mode = "latent"        model = small_llm_int8        # Step 7: Reasoning    if reasoning_mode == "latent":        latent_tokens, answer = latent_reasoning_engine.generate(            query, context, budget.reasoning        )    else:  # explicit        cot_trace, answer = explicit_cot_engine.generate(            query, context, budget.reasoning        )        # Step 8: Verification    confidence = verification_model.predict(query, answer, context)        if confidence < 0.8:        # Escalate: more compute or human review        if budget.remaining > 0:            # Retry with more expensive path            return aeon_inference(query, sla_latency, cost_budget * 2)        else:            # Flag for human review            flag_for_review(query, answer, confidence)        # Step 9: Output + caching    semantic_cache.store(query, answer)    log_compute_usage(query, budget.used)        return answer
+
+24.7 Compute Allocation Algorithm
+
+class BudgetAllocator:    def allocate(self, task_type, difficulty, uncertainty, sla, cost_limit):        # Base budget from historical data        base_budget = self.historical_lookup(task_type, difficulty)                # Adjust for uncertainty        if uncertainty == "high":            base_budget *= 1.5        elif uncertainty == "low":            base_budget *= 0.7                # Adjust for SLA        if sla < 500:  # ms            # Latency-constrained: favor cheaper models            base_budget *= 0.8        elif sla > 2000:            # Latency-relaxed: can use more compute            base_budget *= 1.2                # Enforce cost limit        if base_budget > cost_limit:            base_budget = cost_limit                # Allocate across components        if task_type == "classification":            return Budget(routing=0.8, retrieval=0.0, reasoning=0.0, generation=0.2)        elif task_type == "reasoning":            if difficulty == "hard":                return Budget(routing=0.05, retrieval=0.1, reasoning=0.7, generation=0.15)            else:                return Budget(routing=0.05, retrieval=0.05, reasoning=0.6, generation=0.3)        else:  # generation            return Budget(routing=0.05, retrieval=0.1, reasoning=0.3, generation=0.55)
+
+24.8 Training Strategy
+
+Phase 1: Pretrain base models (small LLM, large MoE) on standard corpora
+
+Phase 2: Train decision models (task analyzer, router, verification) on labeled data: - Task classification: label by task type, difficulty, uncertainty - Router: label by optimal model (cheapest model that solves task) - Verification: label by correctness (binary)
+
+Phase 3: Distill latent reasoning models from explicit CoT: - Generate explicit CoT on training data - Train latent reasoning model to predict same answers with compressed reasoning arxiv
+
+Phase 4: Train compute controller (budget allocator) via reinforcement learning: - Reward: accuracy / cost - Penalty: SLA violations, cost overruns lumiere-research
+
+Phase 5: Fine-tune all components jointly with multi-task objectives: - Accuracy on downstream tasks - Compute efficiency (FLOPs, tokens, latency) - Calibration (confidence matches accuracy) beri
+
+24.9 Memory Strategy
+
+Semantic cache: Store recent query-answer pairs with semantic hashing; TTL-based eviction arxiv
+
+KV-cache compression: INT8 quantization + low-rank decomposition for long contexts aclanthology
+
+Prefix caching: Reuse KV-cache for repeated prefixes (e.g., system prompts) arxiv
+
+External memory: Hierarchical RAG for long-tail knowledge; retrieve on demand emergentmind
+
+24.10 Token Strategy
+
+Latent reasoning: Compress reasoning into 1–10 latent tokens for easy/medium tasks arxiv
+
+Explicit CoT: Use only for hard tasks where latent reasoning underperforms arxiv
+
+Multi-token prediction: Predict 4–8 tokens per step for generation tasks aiwiki
+
+Token pruning: Remove low-attention tokens during generation arxiv
+
+24.11 Routing Strategy
+
+Confidence-based routing: Small model predicts; if confidence > threshold, accept answer; else escalate emergentmind
+
+Semantic routing: Classifier predicts task difficulty/domain; route to specialized model arxiv
+
+Learned routing: RL-trained router optimizes cost/accuracy trade-off lumiere-research
+
+24.12 Reasoning Strategy
+
+Latent-first: Attempt latent reasoning on all tasks; escalate to explicit CoT only if verification fails arxiv
+
+Adaptive depth: Early exit from latent reasoning when confidence stabilizes link.springer
+
+Hierarchical reasoning: High-level planning in latent space, low-level execution in explicit tokens arxiv
+
+24.13 Verification Strategy
+
+Calibrated decision model: Predict confidence for each answer; escalate if confidence < 0.8 beri
+
+Process reward model (PRM): Score reasoning traces for correctness lumiere-research
+
+Self-consistency: Generate multiple answers; accept if consistent lumiere-research
+
+24.14 Hardware Strategy
+
+INT8/FP8 inference: Use quantized models for latency/cost efficiency aclanthology
+
+FlashAttention: Optimize attention for memory bandwidth arxiv
+
+Speculative decoding hardware: Ensure GPU has spare compute for draft+verify (low-to-moderate concurrency) docs.nvidia
+
+MoE expert parallelism: Distribute experts across multiple GPUs to reduce memory bandwidth arxiv
+
+24.15 Expected Efficiency Improvements
+
+Metric
+
+Baseline (Dense 70B)
+
+AEON (Estimated)
+
+Improvement
+
+Tokens/query
+
+500
+
+100
+
+5× reduction arxiv
+
+FLOPs/query
+
+140B
+
+25B
+
+5.6× reduction arxiv
+
+Latency
+
+2000 ms
+
+400 ms
+
+5× reduction aiwiki
+
+Memory
+
+140 GB
+
+100 GB
+
+1.4× reduction arxiv
+
+Energy
+
+50 J
+
+12 J
+
+4.2× reduction papers.academic-conferences
+
+Cost ($/1K queries)
+
+$5.00
+
+$1.00
+
+5× reduction scribd
+
+Capability (MMLU)
+
+85%
+
+86%
+
++1 point arxiv
+
+Overall efficiency: (  = 4.3) baseline efficiency (capability per resource unit)
+
+24.16 Failure Modes
+
+Failure Mode
+
+Cause
+
+Mitigation
+
+Over-aggressive latent reasoning
+
+Latent reasoning fails on hard tasks
+
+Escalate to explicit CoT on verification failure arxiv
+
+Router misclassification
+
+Router sends hard query to small model
+
+Verification catches low confidence; escalate arxiv
+
+Speculative decoding slowdown
+
+High batch size or long context
+
+Disable SD; switch to standard decoding docs.nvidia
+
+Budget allocator under-allocation
+
+VOI estimate too conservative
+
+Online learning from logged performance arxiv
+
+Semantic cache staleness
+
+Cached answer becomes outdated
+
+TTL-based eviction; invalidate on knowledge updates arxiv
+
+MoE routing overhead
+
+Expert loading dominates compute
+
+Use 8-bit quantization; limit number of experts arxiv
+
+Quantization accuracy loss
+
+4-bit quantization degrades long-context tasks
+
+Use 8-bit for long-context workloads aclanthology
+
+25. Research Novelty Analysis
+
+25.1 Known (Established Prior Work)
+
+Speculative decoding: EAGLE, Medusa, tree-based speculation aiwiki
+
+Latent reasoning: OneLatent, CoLaR, SPOT, Latent-SFT arxiv
+
+Decision models: TypeSafe Jev, calibrated decision heads byteiota
+
+Adaptive computation: Early exit, MoD, confidence-based halting emergentmind
+
+MoE: Sparse activation, expert routing arxiv
+
+Model cascades: Confidence routing, semantic routing lumiere-research
+
+Test-time compute scaling: Adaptive allocation, VOI-based reasoning resources.rework
+
+25.2 Emerging (Actively Researched)
+
+Hierarchical reasoning models: Multi-level processing, coarse-to-fine reasoning arxiv
+
+World models for LLMs: Internal simulation, model-based planning openreview
+
+Neuro-symbolic integration: Program synthesis, executable reasoning scribd
+
+Compute budget markets: Economically rational inference, VOI-based allocation lumiere-research
+
+25.3 Unsolved (Remains Difficult)
+
+Latent reasoning interpretability: Cannot inspect reasoning trace for debugging arxiv
+
+Speculative decoding at scale: Degrades at high batch sizes and long contexts arxiv
+
+MoE training stability: Very high sparsity requires more data; may not converge arxiv
+
+World model generalization: Domain-specific; cannot generalize across tasks like LLMs mn.cs.tsinghua.edu
+
+Neuro-symbolic scalability: Combining neural perception with symbolic reasoning at scale scribd
+
+25.4 Underexplored (Little Attention)
+
+Latent reasoning + decision models + adaptive routing: Combining all three for multiplicative efficiency byteiota
+
+Hierarchical reasoning + world models: Multi-level simulation for planning arxiv
+
+Compute budget markets for multi-agent systems: Allocating compute across agents in a marketplace lumiere-research
+
+Semantic caching + RAG + latent reasoning: End-to-end optimization of memory hierarchy arxiv
+
+25.5 Potentially Novel (Insufficiently Explored)
+
+AEON’s novel contributions:
+
+Unified VOI-based compute controller: Integrates task analysis, budget allocation, routing, reasoning mode selection, and verification into single economically-rational framework lumiere-research
+
+Latent-first reasoning with escalation: Attempt latent reasoning on all tasks; escalate to explicit CoT only on verification failure arxiv
+
+Hierarchical RAG + semantic cache + decision models: Three-tier memory hierarchy optimized for cost/latency arxiv
+
+Compute budget market for inference: Explicit budget allocation across routing, retrieval, reasoning, generation based on VOI lumiere-research
+
+Distinction from prior work: - Prior work optimizes individual components (speculative decoding, latent reasoning, routing) in isolation - AEON integrates all components with unified economic objective (maximize capability per resource unit) - Prior work uses fixed compute allocation; AEON dynamically allocates based on VOI lumiere-research
+
+26. Experimental Design
+
+26.1 Phase 1: Software Simulation
+
+Goal: Validate compute allocation algorithm in simulation
+
+Setup: - Simulate AEON with oracle task analyzer (perfect difficulty/uncertainty estimates) - Use historical query distribution (e.g., 50% easy, 30% medium, 20% hard) - Compare AEON vs. baseline (uniform compute allocation)
+
+Metrics: - Accuracy vs. cost curve - SLA compliance rate - Average compute per query
+
+Expected result: AEON achieves 4× efficiency gain over uniform allocation lumiere-research
+
+26.2 Phase 2: Small Open-Source Models
+
+Goal: Implement AEON on small models (1–7B parameters)
+
+Setup: - Base models: Phi-3-mini (3.8B), Qwen2.5-7B - Decision models: Fine-tune small classifier for task analysis, routing, verification - Latent reasoning: Distill from explicit CoT on GSM8k, MATH arxiv - RAG: Use hierarchical RAG with FAISS + LLM re-ranking emergentmind
+
+Benchmarks: - GSM8k, MATH (reasoning) - MMLU (general knowledge) - Custom classification/routing tasks
+
+Expected result: AEON achieves 3–5× efficiency gain on small models arxiv
+
+26.3 Phase 3: Prototype Adaptive Router
+
+Goal: Train learned router to replace oracle task analyzer
+
+Setup: - Router architecture: Small transformer (100M parameters) - Training data: Label each query with optimal model (cheapest model that solves task) - Loss: Cross-entropy on model selection + cost penalty
+
+Metrics: - Router accuracy (% queries routed to optimal model) - Cost/accuracy trade-off vs. oracle router
+
+Expected result: Learned router achieves 90–95% of oracle router efficiency emergentmind
+
+26.4 Phase 4: Latent Reasoning Experiment
+
+Goal: Validate latent reasoning on reasoning benchmarks
+
+Setup: - Distill OneLatent-style model from explicit CoT on GSM8k, MATH arxiv - Compare latent vs. explicit reasoning on accuracy, tokens, latency
+
+Metrics: - Accuracy drop (latent vs. explicit) - Token reduction - Latency reduction
+
+Expected result: 4–10× token reduction with <3% accuracy drop arxiv
+
+26.5 Phase 5: Speculative Decoding Integration
+
+Goal: Integrate EAGLE-3 / Medusa into AEON
+
+Setup: - Implement EAGLE-3 on LLaMA-3-8B, LLaMA-3-70B aiwiki - Measure speedup at different batch sizes and context lengths
+
+Metrics: - Speedup vs. batch size - Speedup vs. context length - Acceptance rate
+
+Expected result: 2–4× speedup at low batch sizes; degradation at high batch sizes aiwiki
+
+26.6 Phase 6: Decision-Model Integration
+
+Goal: Integrate Jev-like decision models for classification/routing/verification
+
+Setup: - Train decision models on classification, routing, verification tasks byteiota - Compare decision model vs. LLM generation on accuracy, latency, cost
+
+Metrics: - Accuracy (decision model vs. LLM) - Latency reduction - Cost reduction
+
+Expected result: 100–500× cost reduction for classification/routing tasks byteiota
+
+26.7 Phase 7: Full Adaptive Inference Engine
+
+Goal: Integrate all components into end-to-end AEON system
+
+Setup: - Combine task analyzer, budget allocator, router, latent reasoning, explicit CoT, verification, speculative decoding, decision models - Deploy on representative workload (e.g., customer support queries, coding assistance)
+
+Metrics: - End-to-end latency, cost, accuracy - Efficiency gain vs. baseline (dense LLM)
+
+Expected result: 5–10× efficiency gain over baseline arxiv
+
+26.8 Phase 8: Benchmark Against Standard LLM Inference
+
+Goal: Comprehensive benchmark vs. standard baselines
+
+Baselines: - Dense LLM (LLaMA-3-70B) - MoE LLM (Mixtral 8×7B) - Small-model cascade (Phi-3 → LLaMA-3-70B) - Speculative decoding (EAGLE-3) - Reasoning model (DeepSeek-R1-Distill) - RAG system (LLaMA-3-8B + RAG)
+
+Metrics: - Capability: MMLU, GSM8k, MATH, HumanEval, custom tasks - Efficiency: tokens/query, FLOPs/query, latency, memory, energy, cost - Efficiency frontier: Plot capability vs. cost, latency, tokens
+
+Expected result: AEON dominates baselines on efficiency frontier (higher capability at lower cost) arxiv
+
+27. Benchmark Suite
+
+27.1 Capability Benchmarks
+
+Benchmark
+
+Task Type
+
+Metric
+
+MMLU
+
+General knowledge
+
+Accuracy (%) arxiv
+
+GSM8k
+
+Math reasoning
+
+Accuracy (%) arxiv
+
+MATH
+
+Advanced math
+
+Accuracy (%) arxiv
+
+HumanEval
+
+Code generation
+
+Pass@1 (%) arxiv
+
+AIME2025
+
+Competition math
+
+Accuracy (%) arxiv
+
+GPQA-Diamond
+
+Graduate-level QA
+
+Accuracy (%) arxiv
+
+Custom classification
+
+Routing, task type
+
+Accuracy (%) byteiota
+
+Custom reasoning
+
+Multi-hop reasoning
+
+Accuracy (%) emergentmind
+
+27.2 Efficiency Benchmarks
+
+Metric
+
+Measurement
+
+Tokens/query
+
+Generated tokens + input tokens arxiv
+
+FLOPs/query
+
+2 × parameters × tokens (theoretical) proceedings.iclr
+
+Latency
+
+Wall-clock time per query (P50, P95, P99) inference
+
+Throughput
+
+Queries/second at various batch sizes docs.nvidia
+
+Peak memory
+
+GPU memory usage (GB) arxiv
+
+KV-cache memory
+
+KV-cache size (GB) at various context lengths arxiv
+
+Energy
+
+Joules per query (via power meters or estimation) papers.academic-conferences
+
+Cost
+
+$/1K queries (based on cloud pricing or compute cost) scribd
+
+27.3 Efficiency Frontier Plots
+
+Plot 1: Capability (MMLU accuracy) vs. Cost ($/1K queries)
+
+Plot 2: Capability (GSM8k accuracy) vs. Latency (ms)
+
+Plot 3: Capability (HumanEval pass@1) vs. Tokens/query
+
+Plot 4: Capability (composite score) vs. FLOPs/query
+
+Expected outcome: AEON should dominate baselines (higher capability at lower cost/latency/tokens/FLOPs) arxiv
+
+28. Prototype Roadmap
+
+Phase
+
+Timeline
+
+Hardware
+
+Deliverable
+
+Phase 1: Simulation
+
+1 month
+
+CPU-only
+
+Compute allocation algorithm validated in simulation arxiv
+
+Phase 2: Small models
+
+2 months
+
+1× A100 (80GB)
+
+AEON prototype on Phi-3, Qwen2.5-7B arxiv
+
+Phase 3: Adaptive router
+
+2 months
+
+1× A100 (80GB)
+
+Learned router trained and evaluated arxiv
+
+Phase 4: Latent reasoning
+
+3 months
+
+2× A100 (80GB)
+
+Latent reasoning model distilled from CoT arxiv
+
+Phase 5: Speculative decoding
+
+2 months
+
+1× H100 (80GB)
+
+EAGLE-3 integrated and benchmarked aiwiki
+
+Phase 6: Decision models
+
+2 months
+
+1× A100 (80GB)
+
+Jev-like decision models trained byteiota
+
+Phase 7: Full integration
+
+3 months
+
+4× H100 (80GB)
+
+End-to-end AEON system deployed arxiv
+
+Phase 8: Benchmark
+
+2 months
+
+8× H100 (80GB)
+
+Comprehensive benchmark vs. baselines arxiv
+
+Total timeline: 17 months
+
+Total hardware cost (estimated): $500K–$1M (cloud or on-prem)
+
+29. Open Research Questions
+
+Latent reasoning interpretability: Can we make latent reasoning interpretable without sacrificing efficiency? arxiv
+
+Speculative decoding at scale: Can we design SD variants that maintain speedup at high batch sizes and long contexts? arxiv
+
+MoE training at extreme sparsity: Can we train MoE models with >99% sparsity without requiring prohibitive data? arxiv
+
+World model generalization: Can we train world models that generalize across domains like LLMs? mn.cs.tsinghua.edu
+
+Neuro-symbolic scalability: How to scale neuro-symbolic systems to open-domain reasoning? scribd
+
+Compute budget markets: How to design fair, efficient compute allocation mechanisms in multi-agent systems? lumiere-research
+
+VOI estimation accuracy: How to accurately estimate value-of-information for arbitrary tasks? lumiere-research
+
+Hierarchical reasoning training: How to train hierarchical reasoning models end-to-end? arxiv
+
+Semantic caching at scale: How to scale semantic caching to billions of queries with low latency? arxiv
+
+Energy-aware inference: How to optimize for energy consumption directly (not just FLOPs)? arxiv
+
+30. Final Architecture Specification
+
+30.1 Architecture Name
+
+AEON (Adaptive Economically-Optimized Network)
+
+30.2 Core Principle
+
+Economically rational inference: Maximize capability per resource unit by dynamically allocating compute budget based on value-of-information. lumiere-research
+
+30.3 Full Architecture Diagram
+
+(See Section 24.3)
+
+30.4 Components
+
+(See Section 24.4)
+
+30.5 Data Flow
+
+(See Section 24.5)
+
+30.6 Inference Algorithm
+
+(See Section 24.6)
+
+30.7 Compute Allocation Algorithm
+
+(See Section 24.7)
+
+30.8 Training Strategy
+
+(See Section 24.8)
+
+30.9 Memory Strategy
+
+(See Section 24.9)
+
+30.10 Token Strategy
+
+(See Section 24.10)
+
+30.11 Routing Strategy
+
+(See Section 24.11)
+
+30.12 Reasoning Strategy
+
+(See Section 24.12)
+
+30.13 Verification Strategy
+
+(See Section 24.13)
+
+30.14 Hardware Strategy
+
+(See Section 24.14)
+
+30.15 Expected Bottlenecks
+
+Latent reasoning training: Distilling latent reasoning from explicit CoT requires large labeled datasets arxiv
+
+Router accuracy: Learned router must achieve >90% accuracy to match oracle efficiency emergentmind
+
+Verification calibration: Verification model must be well-calibrated; overconfidence leads to false acceptance beri
+
+Speculative decoding at scale: SD degrades at high batch sizes; must dynamically enable/disable arxiv
+
+MoE routing overhead: Expert loading can dominate compute; requires careful expert parallelism arxiv
+
+30.16 Experimental Validation Plan
+
+(See Section 26)
+
+30.17 Most Promising Novel Research Directions
+
+VOI-based compute allocation: Economically rational inference with dynamic budget allocation lumiere-research
+
+Latent-first reasoning with escalation: Attempt latent reasoning on all tasks; escalate only on verification failure arxiv
+
+Hierarchical RAG + semantic cache + decision models: Three-tier memory hierarchy optimized for cost/latency arxiv
+
+Compute budget markets for multi-agent systems: Allocating compute across agents in a marketplace lumiere-research
+
+31. Final Executive Question: What Architecture Should Be Built?
+
+31.1 Most Practical Today (2026)
+
+Architecture: AEON-Lite
+
+Core principle: Model cascade + RAG + latent reasoning + decision models
+
+Components: - Small-model cascade (Phi-3 → LLaMA-3-70B) with confidence routing emergentmind - Hierarchical RAG for knowledge retrieval emergentmind - Latent reasoning (OneLatent-style) for easy/medium tasks arxiv - Jev-like decision models for classification/routing/verification byteiota - Semantic caching for repeated queries arxiv
+
+Trade-offs: - Pros: Can be built with existing models and techniques; 5–10× efficiency gain over baseline arxiv - Cons: Does not fully exploit speculative decoding, MoE, hierarchical reasoning; limited to 5–10× efficiency gain
+
+Hardware: 1–4× A100/H100 GPUs
+
+Expected efficiency: 5–10× improvement over dense LLM baseline arxiv
+
+31.2 Most Ambitious Near-Term Research Architecture (2027–2028)
+
+Architecture: AEON-Pro
+
+Core principle: Full VOI-based compute allocation + latent reasoning + speculative decoding + MoE + hierarchical reasoning
+
+Components: - All AEON-Lite components - Plus: Speculative decoding (EAGLE-3) for generation tasks aiwiki - Plus: MoE models (405B total, 40B active) for complex reasoning arxiv - Plus: Hierarchical reasoning model for multi-level processing arxiv - Plus: Learned router trained via RL lumiere-research - Plus: Compute budget allocator with VOI estimation lumiere-research
+
+Trade-offs: - Pros: 10–30× efficiency gain; state-of-the-art capability arxiv - Cons: High engineering complexity; requires training large models; speculative decoding degrades at scale arxiv
+
+Hardware: 8–32× H100 GPUs
+
+Expected efficiency: 10–30× improvement over dense LLM baseline arxiv
+
+31.3 Long-Term Theoretically Optimal Architecture (2030+)
+
+Architecture: AEON-Ultimate
+
+Core principle: World models + neuro-symbolic reasoning + latent reasoning + economically rational compute allocation
+
+Components: - All AEON-Pro components - Plus: Learned world models for internal simulation and planning openreview - Plus: Neuro-symbolic reasoning (program synthesis, formal verification) for deterministic tasks scribd - Plus: Multi-agent compute budget market for distributed inference lumiere-research - Plus: End-to-end trained hierarchical reasoning with coarse-to-fine processing arxiv
+
+Trade-offs: - Pros: Theoretically optimal efficiency; 50–100× improvement over baseline; generalizes across domains arxiv - Cons: Extremely high research risk; world models and neuro-symbolic systems remain unsolved at scale scribd
+
+Hardware: 100+ H100 GPUs or specialized AI accelerators
+
+Expected efficiency: 50–100× improvement over dense LLM baseline arxiv
+
+32. Conclusion
+
+The maximum-efficiency AI architecture is not a single model, but a system that dynamically routes each inference through the cheapest capable computational path. AEON achieves this by integrating:
+
+Decision models for classification/routing/verification (100–500× cheaper than LLM generation) byteiota
+
+Latent reasoning for compressed thinking (4–87× token reduction) arxiv
+
+Model cascades with confidence routing (3–10× cost reduction) lumiere-research
+
+Speculative decoding for accelerated generation (2–4× latency reduction) aiwiki
+
+VOI-based compute allocation for economically rational inference (4× efficiency gain) lumiere-research
+
+Hierarchical RAG + semantic caching for memory efficiency (2–5× cost reduction) arxiv
+
+Combined, these techniques yield 5–100× efficiency improvements over dense LLM baselines, depending on workload and implementation maturity.
+
+The key insight: Maximize useful intelligence per resource unit, not raw benchmark accuracy at unlimited compute. resources.rework
