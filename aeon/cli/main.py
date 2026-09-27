@@ -30,12 +30,14 @@ def cli():
 @click.option("--target-quality", default=None, type=float, help="Target quality score (0.0 to 1.0)")
 @click.option("--memory", is_flag=True, default=False, help="Enable AEON multi-level memory hierarchy")
 @click.option("--memory-policy", default="balanced", type=click.Choice(["balanced", "latency_first", "cost_first", "quality_first"]), help="Memory hierarchy management policy")
-@click.option("--trace", is_flag=True, help="Display detailed step-by-step controller VOI and memory trace")
-def run(query: str, context: str, sla: float, budget: float, policy: str, cascade: bool, target_quality: float, memory: bool, memory_policy: str, trace: bool):
+@click.option("--tools", is_flag=True, default=False, help="Enable AEON tool-aware computation (Calculator, Python, SymPy, Retrieval, Structured)")
+@click.option("--trace", is_flag=True, help="Display detailed step-by-step controller VOI, memory, and tool trace")
+def run(query: str, context: str, sla: float, budget: float, policy: str, cascade: bool, target_quality: float, memory: bool, memory_policy: str, tools: bool, trace: bool):
     """Run inference on a query with AEON adaptive compute optimization."""
     chosen_policy = "cascade" if cascade else policy
     from aeon.memory.hierarchy import global_memory_hierarchy
-    aeon = AEON(policy=chosen_policy, memory=memory, memory_policy=memory_policy, memory_hierarchy=global_memory_hierarchy)
+    from aeon.tools.tool_controller import global_tool_controller
+    aeon = AEON(policy=chosen_policy, memory=memory, memory_policy=memory_policy, memory_hierarchy=global_memory_hierarchy, tools=tools, tool_controller=global_tool_controller)
     result = aeon.run(
         query=query,
         context=context,
@@ -43,6 +45,7 @@ def run(query: str, context: str, sla: float, budget: float, policy: str, cascad
         cost_budget_usd=budget or 0.01,
         target_quality=target_quality,
         memory=memory,
+        tools=tools,
     )
 
     if trace:
@@ -61,6 +64,20 @@ def run(query: str, context: str, sla: float, budget: float, policy: str, cascad
             click.echo(f"Lookup Latency:    {result.trace.lookup_latency_ms:.2f} ms")
             if result.trace.reuse_decision:
                 click.echo(f"Reuse Decision:    {result.trace.reuse_decision}")
+            click.echo("────────────────────────────────────────────────")
+
+        if tools or result.trace.tool_used:
+            click.echo("\n──────────── AEON TOOL COMPUTATION ────────────")
+            click.echo(f"Tool Used:         {result.trace.tool_used or 'NONE'} ({result.trace.tool_category or 'none'})")
+            click.echo(f"Verification:      {result.trace.verification_status or 'none'}")
+            click.echo(f"Tool Latency:      {result.trace.tool_latency_ms:.2f} ms")
+            click.echo(f"Tool Cost:         ${result.trace.tool_cost_usd:.7f} USD")
+            click.echo(f"Tool FLOPs:        {result.trace.tool_compute_flops:.2e}")
+            click.echo(f"Model Avoided:     {result.trace.unnecessary_model_avoided}")
+            if result.trace.plan_steps:
+                click.echo("Plan Steps:")
+                for s in result.trace.plan_steps:
+                    click.echo(f"  - Step {s.get('step_id')}: {s.get('tool')} ({s.get('action')}) -> {s.get('status')}")
             click.echo("────────────────────────────────────────────────")
 
         if result.trace.trace_steps:
@@ -210,17 +227,57 @@ def memory_benchmark():
 
 
 @cli.command()
-@click.option("--phase", type=click.Choice(["1", "2", "3"]), default="2", help="Benchmark phase (1, 2, or 3)")
+@click.option("--phase", type=click.Choice(["1", "2", "3", "4"]), default="2", help="Benchmark phase (1, 2, 3, or 4)")
 @click.option("--ablation", is_flag=True, help="Run Phase 2 VOI systematic ablation study")
 @click.option("--memory-ablation", is_flag=True, help="Run Phase 3 memory tier ablation study")
+@click.option("--tool-ablation", is_flag=True, help="Run Phase 4 tool ablation study")
+@click.option("--tool-vs-model", is_flag=True, help="Run Section 31 Model vs Tool experiment")
+@click.option("--tool-failure", is_flag=True, help="Run Section 33 Tool failure and fallback recovery experiment")
+@click.option("--budget-study", is_flag=True, help="Run Section 34 budget sensitivity experiment")
 @click.option("--target-exp", is_flag=True, help="Run target quality (>=0.85) experiment")
 @click.option("--semantic-safety", is_flag=True, help="Run Section 27 semantic cache false-positive safety experiment")
 @click.option("--freshness", is_flag=True, help="Run Section 28 freshness experiment")
 @click.option("--memory-pressure", is_flag=True, help="Run Section 29 memory pressure experiment")
 @click.option("--voi", is_flag=True, help="Run Phase 2 VOI evaluation")
-def benchmark(phase: str, ablation: bool, memory_ablation: bool, target_exp: bool, semantic_safety: bool, freshness: bool, memory_pressure: bool, voi: bool):
+def benchmark(phase: str, ablation: bool, memory_ablation: bool, tool_ablation: bool, tool_vs_model: bool, tool_failure: bool, budget_study: bool, target_exp: bool, semantic_safety: bool, freshness: bool, memory_pressure: bool, voi: bool):
     """Run comparative benchmark suite and ablations."""
     harness = BenchmarkHarness()
+
+    if tool_ablation:
+        click.echo("\nRunning AEON Phase 4 Tool Ablation Study...\n")
+        results = harness.run_tool_ablation_study()
+        click.echo("=" * 95)
+        click.echo(
+            f"{'Ablation Configuration':<28} | {'Quality':<7} | {'Latency':<9} | {'Cost ($)':<10} | {'Tool Calls':<10} | {'Quality/$':<11}"
+        )
+        click.echo("=" * 95)
+        for name, d in results.items():
+            lat_str = f"{d['latency_ms']:.1f}ms"
+            cost_str = f"${d['cost_usd']:.5f}"
+            click.echo(
+                f"{name:<28} | {d['quality']*100:>6.1f}% | {lat_str:>9} | {cost_str:>10} | {d['tool_calls']:>10} | {d['quality_per_dollar']:>11.0f}"
+            )
+        click.echo("=" * 95)
+        click.echo()
+        return
+
+    if tool_vs_model:
+        click.echo("\nRunning Section 31 Model vs Tool Experiment (Unnecessary Model Invocation Rate)...\n")
+        res = harness.run_tool_vs_model_experiment()
+        click.echo(json.dumps(res, indent=2))
+        return
+
+    if tool_failure:
+        click.echo("\nRunning Section 33 Tool Failure and Graceful Fallback Experiment...\n")
+        res = harness.run_tool_failure_experiment()
+        click.echo(json.dumps(res, indent=2))
+        return
+
+    if budget_study:
+        click.echo("\nRunning Section 34 Budget Sensitivity Experiment...\n")
+        res = harness.run_budget_experiment()
+        click.echo(json.dumps(res, indent=2))
+        return
 
     if memory_ablation:
         click.echo("\nRunning AEON Phase 3 Memory Hierarchy Ablation Study...\n")
@@ -295,6 +352,24 @@ def benchmark(phase: str, ablation: bool, memory_ablation: bool, target_exp: boo
         click.echo()
         return
 
+    if phase == "4":
+        click.echo("\nRunning AEON Phase 4 Tool-Aware Computation Benchmark Suite...\n")
+        results = harness.run_phase4()
+        click.echo("=" * 115)
+        click.echo(
+            f"{'Configuration':<32} | {'Quality':<7} | {'Latency':<9} | {'Cost ($)':<10} | {'Tokens':<8} | {'Quality/$':<11} | {'Quality/TFLOP':<13}"
+        )
+        click.echo("=" * 115)
+        for name, m in results.items():
+            lat_str = f"{m.mean_latency_ms:.1f}ms"
+            cost_str = f"${m.total_cost_usd:.5f}"
+            click.echo(
+                f"{name:<32} | {m.accuracy*100:>6.1f}% | {lat_str:>9} | {cost_str:>10} | {m.total_tokens:>8} | {m.quality_per_dollar:>11.0f} | {m.quality_per_tflops:>13.4f}"
+            )
+        click.echo("=" * 115)
+        click.echo()
+        return
+
     if phase == "3":
         click.echo("\nRunning AEON Phase 3 Memory Hierarchy Benchmark Suite...\n")
         results = harness.run_phase3()
@@ -333,6 +408,80 @@ def benchmark(phase: str, ablation: bool, memory_ablation: bool, target_exp: boo
         )
     click.echo("=" * 115)
     click.echo()
+
+
+# =========================================================================
+# Phase 4 Tool Commands (Section 38)
+# =========================================================================
+
+@cli.group()
+def tools():
+    """AEON Tool-Aware Computation commands."""
+    pass
+
+
+@tools.command(name="list")
+def tools_list():
+    """List registered computational tools and their capability descriptors."""
+    from aeon.tools.registry import global_tool_registry
+    tool_names = global_tool_registry.list_tools()
+    click.echo("\n==================== AEON REGISTERED TOOLS ====================")
+    click.echo(f"{'Tool Name':<15} | {'Category':<16} | {'Deterministic':<14} | {'Mode':<22}")
+    click.echo("-" * 72)
+    for name in tool_names:
+        t = global_tool_registry.get(name)
+        mode = getattr(t, "execution_mode", "REAL_EXECUTION")
+        det = "True" if getattr(t, "category", None) and t.category.value in ["deterministic", "symbolic"] else "False"
+        cat = t.category.value if hasattr(t, "category") else "deterministic"
+        click.echo(f"{name:<15} | {cat:<16} | {det:<14} | {mode:<22}")
+    click.echo("===============================================================\n")
+
+
+@tools.command(name="stats")
+def tools_stats():
+    """Display cumulative tool execution and compute-avoidance telemetry."""
+    from aeon.tools.tool_controller import global_tool_controller
+    s = global_tool_controller.stats
+    click.echo("\n==================== AEON TOOL STATS ====================")
+    click.echo(f"Total Tool Calls:          {s.total_calls}")
+    click.echo(f"Successful Calls:          {s.successful_calls}")
+    click.echo(f"Failed Calls:              {s.failed_calls}")
+    click.echo(f"Unnecessary Models Avoided:{s.unnecessary_models_avoided}")
+    click.echo(f"Total Compute Saved:       {s.total_compute_saved_flops:.2e} FLOPs")
+    click.echo(f"Total Cost Saved:          ${s.total_cost_saved_usd:.6f} USD")
+    click.echo(f"Total Latency Saved:       {s.total_latency_saved_ms:.1f} ms")
+    click.echo(f"Verification Runs:         {s.verification_runs}")
+    click.echo(f"Fallbacks Triggered:       {s.fallbacks_triggered}")
+    if s.calls_by_tool:
+        click.echo("Calls By Tool:")
+        for t_name, c in s.calls_by_tool.items():
+            click.echo(f"  - {t_name:<16}: {c}")
+    click.echo("=========================================================\n")
+
+
+@tools.command(name="clear")
+def tools_clear():
+    """Reset operational tool execution statistics."""
+    from aeon.tools.tool_controller import global_tool_controller
+    global_tool_controller.clear_stats()
+    click.echo("Tool operational telemetry reset successfully.")
+
+
+@tools.command(name="benchmark")
+def tools_benchmark():
+    """Run dedicated Phase 4 tool experiments (model vs tool and fallback tests)."""
+    harness = BenchmarkHarness()
+    click.echo("\n--- Running Section 31 Model vs Tool Experiment ---")
+    tvm = harness.run_tool_vs_model_experiment()
+    click.echo(f"Unnecessary Model Invocation Rate: {tvm['unnecessary_model_invocation_rate']}")
+    click.echo(f"Tool Routing Accuracy:             {tvm['tool_routing_accuracy']*100:.1f}%")
+    click.echo(f"Status:                            {tvm['status']}")
+
+    click.echo("\n--- Running Section 33 Tool Failure Recovery Experiment ---")
+    tfe = harness.run_tool_failure_experiment()
+    click.echo(f"Fallback Succeeded:                {tfe['fallback_succeeded']}")
+    click.echo(f"Fallback Route:                    {tfe['fallback_route']}")
+    click.echo(f"Status:                            {tfe['status']}\n")
 
 
 if __name__ == "__main__":

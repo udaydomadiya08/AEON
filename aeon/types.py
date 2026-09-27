@@ -20,6 +20,11 @@ class TaskType(str, Enum):
     CODE = "code"
     MATH = "math"
     CREATIVE = "creative"
+    ARITHMETIC = "arithmetic"
+    SYMBOLIC_MATH = "symbolic_math"
+    FINANCIAL = "financial"
+    DATA_ANALYSIS = "data_analysis"
+    RETRIEVAL = "retrieval"
 
 
 class DifficultyLevel(str, Enum):
@@ -82,6 +87,14 @@ class ControllerAction(str, Enum):
     PARTIAL_CACHE_REUSE = "PARTIAL_CACHE_REUSE"
     RECOMPUTE = "RECOMPUTE"
     VERIFY_CACHE = "VERIFY_CACHE"
+    # Phase 4 Tool Actions
+    CALCULATOR = "CALCULATOR"
+    PYTHON = "PYTHON"
+    SYMPY = "SYMPY"
+    RETRIEVAL = "RETRIEVAL"
+    STRUCTURED_COMPUTE = "STRUCTURED_COMPUTE"
+    EXECUTE_PLAN = "EXECUTE_PLAN"
+    FALLBACK_REROUTE = "FALLBACK_REROUTE"
 
 
 class DecisionReason(str, Enum):
@@ -99,6 +112,13 @@ class DecisionReason(str, Enum):
     PARTIAL_PREFIX_REUSE = "PARTIAL_PREFIX_REUSE"
     CACHE_REJECTED_STALE = "CACHE_REJECTED_STALE"
     CACHE_REJECTED_RISK = "CACHE_REJECTED_RISK"
+    # Phase 4 Tool Decision Reasons
+    TOOL_DETERMINISTIC_SUFFICIENT = "TOOL_DETERMINISTIC_SUFFICIENT"
+    TOOL_CHEAPEST_PATH = "TOOL_CHEAPEST_PATH"
+    TOOL_VERIFIED = "TOOL_VERIFIED"
+    TOOL_FAILED_REROUTE = "TOOL_FAILED_REROUTE"
+    MODEL_UNNECESSARY = "MODEL_UNNECESSARY"
+    MODEL_REQUIRED_FOR_REASONING = "MODEL_REQUIRED_FOR_REASONING"
 
 
 class UtilityWeights(BaseModel):
@@ -188,6 +208,18 @@ class Telemetry(BaseModel):
     reuse_decision: Optional[str] = None
     memory_bytes_reused: int = 0
 
+    # Phase 4 Tool-Aware Computation Telemetry
+    tool_used: Optional[str] = None
+    tool_category: Optional[str] = None
+    tool_cost_usd: float = 0.0
+    tool_latency_ms: float = 0.0
+    tool_compute_flops: float = 0.0
+    verification_status: Optional[str] = None
+    verification_cost_usd: float = 0.0
+    unnecessary_model_avoided: bool = False
+    fallback_occurred: bool = False
+    plan_steps: List[Dict[str, Any]] = Field(default_factory=list)
+
 
 class ComputeState(BaseModel):
     """
@@ -252,6 +284,9 @@ class InferenceRequest(BaseModel):
     session_id: Optional[str] = None
     model_version: Optional[str] = None
     consistency: Optional[str] = None
+    tools: Optional[bool] = None
+    tool_budget: Optional[Dict[str, Any]] = None
+    require_verification: Optional[bool] = None
 
 
 class ExecutionPlan(BaseModel):

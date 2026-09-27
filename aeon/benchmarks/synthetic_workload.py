@@ -247,3 +247,123 @@ def generate_phase3_mixed_workload(count: int = 30) -> List[InferenceRequest]:
         out.append(queries[i % len(queries)].model_copy(deep=True))
     return out
 
+
+# =========================================================================
+# Phase 4 Tool-Aware Synthetic Workloads (Section 28 & 31)
+# =========================================================================
+
+def generate_arithmetic_workload(count: int = 20) -> List[InferenceRequest]:
+    """Arithmetic workload (Section 28A): exact percentages and arithmetic calculations."""
+    samples = [
+        ("What is 17.5% of 840?", "147"),
+        ("Calculate 25 * 40 - 12", "988"),
+        ("Compute 144 / 12 + 35 * 2", "82"),
+        ("What is 8.25% of 2400?", "198"),
+        ("Evaluate 2 ** 8 + 15 * 4", "316"),
+        ("What is 33.3% of 900?", "299.7"),
+        ("Calculate (50 + 25) * 4 / 2", "150"),
+        ("What is 12.5% of 1600?", "200"),
+    ]
+    out = []
+    for i in range(count):
+        q, gt = samples[i % len(samples)]
+        out.append(InferenceRequest(query=q, ground_truth=gt, task_hint="arithmetic", tools=True))
+    return out
+
+
+def generate_symbolic_math_workload(count: int = 15) -> List[InferenceRequest]:
+    """Symbolic math workload (Section 28C): equations, derivatives, integrals, factorizations."""
+    samples = [
+        ("Solve x^2 + 5x + 6 = 0", "x = -3, -2"),
+        ("Solve 2*x + 8 = 20", "x = 6"),
+        ("Derivative of x^3 + 2*x", "3*x**2 + 2"),
+        ("Integral of 3*x^2", "x**3"),
+        ("Factorize x^2 - 9", "(x - 3)*(x + 3)"),
+        ("Solve x^2 - 4 = 0", "x = -2, 2"),
+    ]
+    out = []
+    for i in range(count):
+        q, gt = samples[i % len(samples)]
+        out.append(InferenceRequest(query=q, ground_truth=gt, task_hint="symbolic_math", tools=True))
+    return out
+
+
+def generate_financial_workload(count: int = 15) -> List[InferenceRequest]:
+    """Financial calculations workload (Section 28B): CAGR, margins, returns."""
+    samples = [
+        ("Calculate CAGR from initial 100 to final 250 over 5 years", "20.11%"),
+        ("Calculate profit margin with revenue 1000 and cost 650", "35.00%"),
+        ("What is the CAGR for revenue starting at 50 and ending at 120 in 3 years", "33.89%"),
+        ("Calculate gross margin with revenue 5000 and cost 2000", "60.00%"),
+    ]
+    out = []
+    for i in range(count):
+        q, gt = samples[i % len(samples)]
+        out.append(InferenceRequest(query=q, ground_truth=gt, task_hint="financial", tools=True))
+    return out
+
+
+def generate_retrieval_workload(count: int = 15) -> List[InferenceRequest]:
+    """Retrieval workload (Section 28E): fact lookup and source attribution."""
+    samples = [
+        ("What was NVIDIA revenue in FY2025?", "$130.5 billion"),
+        ("What was Apple revenue in 2024?", "$391.04 billion"),
+        ("What is the GDP of India?", "$3.94 trillion"),
+        ("What is the capital of France?", "Paris"),
+    ]
+    out = []
+    for i in range(count):
+        q, gt = samples[i % len(samples)]
+        out.append(InferenceRequest(query=q, ground_truth=gt, task_hint="factual", tools=True, memory=True))
+    return out
+
+
+def generate_reasoning_workload(count: int = 15) -> List[InferenceRequest]:
+    """Formal and deductive reasoning workload where models are required."""
+    samples = [
+        ("Prove that the square root of 2 is irrational.", "Proof by contradiction"),
+        ("Explain why all prime numbers greater than 2 must be odd.", "Deduction on divisibility by 2"),
+        ("Deduce the truth value: If every graph with n vertices has degree d, does G contain a cycle?", "Cycle existence proof"),
+        ("Analyze the strategic trade-offs of microservices vs monolithic architecture in high-throughput systems.", "Trade-off evaluation"),
+    ]
+    out = []
+    for i in range(count):
+        q, gt = samples[i % len(samples)]
+        out.append(InferenceRequest(query=q, ground_truth=gt, task_hint="reasoning", tools=True))
+    return out
+
+
+def generate_model_vs_tool_workload() -> List[Dict[str, Any]]:
+    """
+    Dedicated test cases for Section 31: Model vs Tool Experiment.
+    Contrasts tasks where a deterministic tool is sufficient against tasks where model reasoning is necessary.
+    """
+    return [
+        {"query": "What is 17.5% of 840?", "task_category": "arithmetic", "tool_sufficient": True, "expected_route": "tool"},
+        {"query": "Solve x^2 + 5x + 6 = 0", "task_category": "symbolic_math", "tool_sufficient": True, "expected_route": "tool"},
+        {"query": "Calculate CAGR from initial 100 to final 250 over 5 years", "task_category": "financial", "tool_sufficient": True, "expected_route": "tool"},
+        {"query": "What was NVIDIA revenue in FY2025?", "task_category": "retrieval", "tool_sufficient": True, "expected_route": "tool"},
+        {"query": "Calculate mean of 12, 18, 24, 30", "task_category": "data_analysis", "tool_sufficient": True, "expected_route": "tool"},
+        {"query": "Prove that the square root of 2 is irrational.", "task_category": "reasoning", "tool_sufficient": False, "expected_route": "model"},
+        {"query": "Write a persuasive essay analyzing the ethical implications of autonomous AI agents.", "task_category": "creative", "tool_sufficient": False, "expected_route": "model"},
+        {"query": "Analyze the philosophical distinction between epistemic and aleatoric uncertainty.", "task_category": "reasoning", "tool_sufficient": False, "expected_route": "model"},
+    ]
+
+
+def generate_phase4_mixed_workload(count: int = 30) -> List[InferenceRequest]:
+    """Section 28G: Comprehensive Phase 4 Mixed Workload."""
+    queries = [
+        InferenceRequest(query="What is 17.5% of 840?", ground_truth="147", task_hint="arithmetic", tools=True, memory=True),
+        InferenceRequest(query="Solve x^2 + 5x + 6 = 0", ground_truth="x = -3, -2", task_hint="symbolic_math", tools=True, memory=True),
+        InferenceRequest(query="Calculate CAGR from initial 100 to final 250 over 5 years", ground_truth="20.11%", task_hint="financial", tools=True, memory=True),
+        InferenceRequest(query="What was NVIDIA revenue in FY2025?", ground_truth="$130.5 billion", task_hint="factual", tools=True, memory=True),
+        InferenceRequest(query="Prove that the square root of 2 is irrational.", ground_truth="Proof", task_hint="reasoning", tools=True, memory=True),
+        InferenceRequest(query="Calculate 25 * 40 - 12", ground_truth="988", task_hint="arithmetic", tools=True, memory=True),
+        InferenceRequest(query="What is 17.5% of 840?", ground_truth="147", task_hint="arithmetic", tools=True, memory=True),  # repeat to test memory + tool synergy
+    ]
+    out = []
+    for i in range(count):
+        out.append(queries[i % len(queries)].model_copy(deep=True))
+    return out
+
+

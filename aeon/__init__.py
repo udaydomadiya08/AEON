@@ -48,7 +48,31 @@ from aeon.memory.types import (
     MemoryScope,
 )
 
-__version__ = "0.3.0"
+from aeon.tools.tool_controller import ToolController, global_tool_controller
+from aeon.tools.types import (
+    ToolType,
+    ToolCategory,
+    ToolStatus,
+    VerificationStatus,
+    ToolCost,
+    ToolCapability,
+    ToolRequest,
+    ToolResult,
+    VerificationResult,
+    ComputationPlan,
+    PlanStep,
+    ToolBudget,
+    ToolStats,
+)
+from aeon.tools.calculator import SafeCalculator
+from aeon.tools.python_tool import RestrictedPythonTool
+from aeon.tools.sympy_tool import SymPyTool
+from aeon.tools.retrieval_tool import RetrievalTool
+from aeon.tools.structured_tool import StructuredComputationTool
+from aeon.tools.verifier import ToolVerifier
+from aeon.tools.registry import ToolRegistry, global_tool_registry
+
+__version__ = "0.4.0"
 
 
 class AEON:
@@ -57,7 +81,7 @@ class AEON:
     Provides simple inference interface: aeon.run(query) -> InferenceResult
     with comprehensive telemetry, routing breakdown, and compute accounting.
     Supports Phase 1 rule-based routing, cascades, Phase 2 VOI dynamic stopping,
-    and Phase 3 multi-level memory hierarchy.
+    Phase 3 multi-level memory hierarchy, and Phase 4 tool-aware computation.
     """
 
     def __init__(
@@ -71,6 +95,8 @@ class AEON:
         memory_policy: str = "balanced",
         memory_budget_mb: float = 512.0,
         memory_hierarchy: Optional[AEONMemoryHierarchy] = None,
+        tools: bool = False,
+        tool_controller: Optional[ToolController] = None,
     ):
         self.registry = registry or global_registry
         self.backend = backend or SimulationBackend(self.registry)
@@ -78,6 +104,7 @@ class AEON:
         self.voi_threshold = voi_threshold
         self.memory_policy = memory_policy
         self.memory_enabled = memory
+        self.tools_enabled = tools
 
         # Initialize or assign memory hierarchy
         if memory_hierarchy is not None:
@@ -94,23 +121,35 @@ class AEON:
             )
             self.memory_hierarchy = AEONMemoryHierarchy(budget=budget)
 
+        # Initialize or assign tool controller
+        self.tool_controller = tool_controller or global_tool_controller
+
         self.voi_controller = DynamicStoppingController(
             backend=self.backend,
             registry=self.registry,
             voi_estimator=VOIEstimator(self.registry, voi_threshold=voi_threshold),
             memory_hierarchy=self.memory_hierarchy,
+            tool_controller=self.tool_controller,
+            tools_enabled=self.tools_enabled,
         )
         self.rules_controller = ComputeController(
             backend=self.backend,
             registry=self.registry,
             use_cascade=(self.policy == "cascade"),
             memory_hierarchy=self.memory_hierarchy,
+            tool_controller=self.tool_controller,
+            tools_enabled=self.tools_enabled,
         )
 
     @property
     def memory(self) -> AEONMemoryHierarchy:
         """Access the multi-level memory hierarchy controller."""
         return self.memory_hierarchy
+
+    @property
+    def tools(self) -> ToolController:
+        """Access the tool-aware computation controller."""
+        return self.tool_controller
 
     def run(
         self,
@@ -124,6 +163,8 @@ class AEON:
         memory: Optional[bool] = None,
         session_id: Optional[str] = None,
         consistency: Optional[str] = None,
+        tools: Optional[bool] = None,
+        require_verification: Optional[bool] = None,
     ) -> InferenceResult:
         """Run an inference request through the AEON economically-optimized engine."""
         # Parse budget dictionary if provided
@@ -136,6 +177,7 @@ class AEON:
             )
 
         active_memory = memory if memory is not None else self.memory_enabled
+        active_tools = tools if tools is not None else self.tools_enabled
 
         if isinstance(query, str):
             req = InferenceRequest(
@@ -149,6 +191,8 @@ class AEON:
                 memory=active_memory,
                 session_id=session_id,
                 consistency=consistency,
+                tools=active_tools,
+                require_verification=require_verification,
             )
         else:
             req = query
@@ -158,6 +202,12 @@ class AEON:
                 req.memory = memory
             elif req.memory is None and self.memory_enabled:
                 req.memory = True
+            if tools is not None:
+                req.tools = tools
+            elif req.tools is None and self.tools_enabled:
+                req.tools = True
+            if require_verification is not None:
+                req.require_verification = require_verification
             if session_id and not req.session_id:
                 req.session_id = session_id
             if consistency and not req.consistency:
@@ -201,5 +251,28 @@ __all__ = [
     "EvictionPolicy",
     "FreshnessPolicy",
     "MemoryScope",
+    "ToolController",
+    "global_tool_controller",
+    "ToolType",
+    "ToolCategory",
+    "ToolStatus",
+    "VerificationStatus",
+    "ToolCost",
+    "ToolCapability",
+    "ToolRequest",
+    "ToolResult",
+    "VerificationResult",
+    "ComputationPlan",
+    "PlanStep",
+    "ToolBudget",
+    "ToolStats",
+    "SafeCalculator",
+    "RestrictedPythonTool",
+    "SymPyTool",
+    "RetrievalTool",
+    "StructuredComputationTool",
+    "ToolVerifier",
+    "ToolRegistry",
+    "global_tool_registry",
     "global_registry",
 ]

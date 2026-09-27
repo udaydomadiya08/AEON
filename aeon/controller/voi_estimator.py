@@ -238,6 +238,49 @@ class VOIEstimator:
             next_reasoning_mode=None,
         )
 
+    def estimate_tool_action(
+        self,
+        state: ComputeState,
+        candidate: Any,
+    ) -> VOIResult:
+        """
+        Evaluate marginal VOI for selecting a specialized computational tool over a model.
+        Conforms to AEON Specification Section 6, 7, 26.
+        """
+        current_q = state.current_quality_estimate
+        future_q = candidate.expected_quality
+        marginal_quality_gain = max(0.0, future_q - current_q)
+
+        marginal_cost = candidate.expected_cost_usd + candidate.verification_cost_usd
+        marginal_latency = candidate.expected_latency_ms
+        marginal_compute = candidate.expected_compute_flops
+
+        voi_ratio = (marginal_quality_gain / marginal_cost) if marginal_cost > 0 else 9999.0
+
+        is_deterministic = candidate.tool_capability.deterministic if candidate.tool_capability else True
+        reason = (
+            DecisionReason.TOOL_DETERMINISTIC_SUFFICIENT
+            if is_deterministic
+            else DecisionReason.TOOL_MORE_EFFICIENT
+        )
+
+        return VOIResult(
+            action=candidate.action,
+            expected_current_quality=round(current_q, 4),
+            expected_future_quality=round(future_q, 4),
+            marginal_quality_gain=round(marginal_quality_gain, 4),
+            marginal_cost_usd=round(marginal_cost, 7),
+            marginal_latency_ms=round(marginal_latency, 2),
+            marginal_compute_flops=marginal_compute,
+            marginal_utility=round(candidate.net_utility, 5),
+            voi_ratio=round(voi_ratio, 2),
+            voi_threshold=self.voi_threshold,
+            is_economically_viable=candidate.net_utility > 0.0,
+            reason=reason,
+            next_model=None,
+            next_reasoning_mode=None,
+        )
+
     def predict_future_quality(
         self,
         state: ComputeState,

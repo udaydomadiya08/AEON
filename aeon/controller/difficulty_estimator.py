@@ -39,13 +39,13 @@ class DifficultyEstimator:
             score -= 0.05
 
         # Task type baseline adjustment
-        if task_type == TaskType.CLASSIFICATION:
+        if task_type in [TaskType.CLASSIFICATION, TaskType.ARITHMETIC]:
             score -= 0.15
-        elif task_type == TaskType.FACTUAL:
+        elif task_type in [TaskType.FACTUAL, TaskType.RETRIEVAL]:
             score -= 0.10
-        elif task_type == TaskType.MATH:
+        elif task_type in [TaskType.MATH, TaskType.SYMBOLIC_MATH]:
             score += 0.25
-        elif task_type == TaskType.CODE:
+        elif task_type in [TaskType.CODE, TaskType.FINANCIAL, TaskType.DATA_ANALYSIS]:
             score += 0.20
         elif task_type == TaskType.REASONING:
             score += 0.20

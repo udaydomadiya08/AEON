@@ -579,3 +579,284 @@ class BenchmarkHarness:
             correct=res.get("correct"),
         )
 
+    # =========================================================================
+    # Phase 4 Tool-Aware Benchmark Suites (Section 29 - 35)
+    # =========================================================================
+
+    def run_phase4(self) -> Dict[str, AggregateMetrics]:
+        """
+        Section 29: Required Comparative Benchmark for Phase 4.
+        Compares:
+        1. LLM-only (70B)
+        2. Small-model-first (1.5B)
+        3. Model cascade
+        4. AEON Phase 3 (VOI + Memory)
+        5. AEON Phase 4 (Full VOI + Memory + Tools)
+        """
+        from aeon.benchmarks.synthetic_workload import generate_phase4_mixed_workload
+        from aeon import AEON
+        workload = generate_phase4_mixed_workload(count=25)
+
+        results = {}
+
+        # 1. LLM-only (70B)
+        traces_large = []
+        large_model = self.registry.get_model_for_route(RouteChoice.LARGE_MODEL)
+        for req in workload:
+            plan = ExecutionPlan(
+                task_type=TaskType.REASONING,
+                difficulty=0.7,
+                difficulty_level=DifficultyLevel.HARD,
+                uncertainty=0.2,
+                route=RouteChoice.LARGE_MODEL,
+                model=large_model.name,
+                reasoning=ReasoningMode.EXPLICIT,
+                verification=True,
+            )
+            res = self.backend.generate(req, plan)
+            traces_large.append(self._to_telemetry(res, plan, "baseline-large"))
+        results["1. LLM-only (70B)"] = calculate_aggregate_metrics("1. LLM-only (70B)", traces_large)
+
+        # 2. Small-model-first (1.5B)
+        traces_small = []
+        small_model = self.registry.get_model_for_route(RouteChoice.SMALL_MODEL)
+        for req in workload:
+            plan = ExecutionPlan(
+                task_type=TaskType.REASONING,
+                difficulty=0.4,
+                difficulty_level=DifficultyLevel.EASY,
+                uncertainty=0.2,
+                route=RouteChoice.SMALL_MODEL,
+                model=small_model.name,
+                reasoning=ReasoningMode.DIRECT,
+                verification=False,
+            )
+            res = self.backend.generate(req, plan)
+            traces_small.append(self._to_telemetry(res, plan, "baseline-small"))
+        results["2. Small-model-first (1.5B)"] = calculate_aggregate_metrics("2. Small-model-first (1.5B)", traces_small)
+
+        # 3. Model cascade
+        cascade_aeon = AEON(policy="cascade", memory=False, tools=False)
+        c_traces = [cascade_aeon.run(r).trace for r in workload]
+        results["3. Model cascade"] = calculate_aggregate_metrics("3. Model cascade", c_traces)
+
+        # 4. AEON Phase 3 (VOI + Memory, no tools)
+        p3_aeon = AEON(policy="voi", memory=True, tools=False)
+        p3_traces = [p3_aeon.run(r).trace for r in workload]
+        results["4. AEON Phase 3 (Memory)"] = calculate_aggregate_metrics("4. AEON Phase 3 (Memory)", p3_traces)
+
+        # 5. AEON Phase 4 (VOI + Memory + Tools)
+        p4_aeon = AEON(policy="voi", memory=True, tools=True)
+        p4_traces = [p4_aeon.run(r).trace for r in workload]
+        results["5. AEON Phase 4 (Tools + Memory)"] = calculate_aggregate_metrics("5. AEON Phase 4 (Tools + Memory)", p4_traces)
+
+        return results
+
+    def run_tool_ablation_study(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Section 30: Tool Ablation Study.
+        Measures the actual contribution of each tool component.
+        """
+        from aeon.benchmarks.synthetic_workload import generate_phase4_mixed_workload
+        from aeon import AEON
+        from aeon.tools.registry import ToolRegistry
+        from aeon.tools.calculator import SafeCalculator
+        from aeon.tools.python_tool import RestrictedPythonTool
+        from aeon.tools.sympy_tool import SymPyTool
+        from aeon.tools.retrieval_tool import RetrievalTool
+        from aeon.tools.structured_tool import StructuredComputationTool
+        from aeon.tools.tool_controller import ToolController
+
+        workload = generate_phase4_mixed_workload(count=20)
+        ablations = {}
+
+        configurations = [
+            ("Full AEON Phase 4", ["calculator", "python", "sympy", "retrieval", "structured"]),
+            ("AEON - Calculator", ["python", "sympy", "retrieval", "structured"]),
+            ("AEON - Python", ["calculator", "sympy", "retrieval", "structured"]),
+            ("AEON - SymPy", ["calculator", "python", "retrieval", "structured"]),
+            ("AEON - Retrieval", ["calculator", "python", "sympy", "structured"]),
+            ("AEON - Memory", ["calculator", "python", "sympy", "retrieval", "structured"]),
+            ("AEON - Verification", ["calculator", "python", "sympy", "retrieval", "structured"]),
+        ]
+
+        all_tools = {
+            "calculator": SafeCalculator(),
+            "python": RestrictedPythonTool(),
+            "sympy": SymPyTool(),
+            "retrieval": RetrievalTool(),
+            "structured": StructuredComputationTool(),
+        }
+
+        for name, active_tool_names in configurations:
+            custom_reg = ToolRegistry()
+            custom_reg._tools.clear()
+            for t_name in active_tool_names:
+                custom_reg.register(all_tools[t_name])
+
+            use_mem = "Memory" not in name
+            t_ctrl = ToolController(tool_registry=custom_reg)
+            aeon = AEON(policy="voi", memory=use_mem, tools=True, tool_controller=t_ctrl)
+
+            traces = []
+            for r in workload:
+                req = r.model_copy(deep=True)
+                if "Verification" in name:
+                    req.require_verification = False
+                res = aeon.run(req)
+                traces.append(res.trace)
+
+            agg = calculate_aggregate_metrics(name, traces)
+            tool_calls = sum(1 for t in traces if t.tool_used is not None)
+            ablations[name] = {
+                "quality": agg.accuracy,
+                "latency_ms": agg.mean_latency_ms,
+                "cost_usd": agg.total_cost_usd,
+                "tool_calls": tool_calls,
+                "quality_per_dollar": agg.quality_per_dollar,
+            }
+
+        return ablations
+
+    def run_tool_vs_model_experiment(self) -> Dict[str, Any]:
+        """
+        Section 31: Model vs Tool Experiment.
+        Tests whether AEON accurately identifies tasks where a tool is sufficient
+        vs tasks where model reasoning is necessary.
+        Measures 'unnecessary model invocation rate'.
+        """
+        from aeon.benchmarks.synthetic_workload import generate_model_vs_tool_workload
+        from aeon import AEON
+
+        workload = generate_model_vs_tool_workload()
+        aeon = AEON(policy="voi", memory=False, tools=True)
+
+        total_tasks = len(workload)
+        tool_sufficient_count = sum(1 for t in workload if t["tool_sufficient"])
+        reasoning_count = total_tasks - tool_sufficient_count
+
+        unnecessary_model_invocations = 0
+        correct_tool_invocations = 0
+        correct_model_invocations = 0
+
+        details = []
+
+        for item in workload:
+            res = aeon.run(item["query"], tools=True)
+            used_tool = res.route == "tool" or res.trace.tool_used is not None
+            used_model = not used_tool
+
+            if item["tool_sufficient"] and used_model:
+                unnecessary_model_invocations += 1
+            elif item["tool_sufficient"] and used_tool:
+                correct_tool_invocations += 1
+            elif not item["tool_sufficient"] and used_model:
+                correct_model_invocations += 1
+
+            details.append({
+                "query": item["query"],
+                "category": item["task_category"],
+                "tool_sufficient": item["tool_sufficient"],
+                "route_selected": res.route,
+                "tool_used": res.trace.tool_used,
+                "model_used": res.trace.model,
+            })
+
+        unnecessary_rate = (unnecessary_model_invocations / tool_sufficient_count) if tool_sufficient_count > 0 else 0.0
+
+        return {
+            "total_tasks": total_tasks,
+            "tool_sufficient_tasks": tool_sufficient_count,
+            "reasoning_tasks": reasoning_count,
+            "unnecessary_model_invocations": unnecessary_model_invocations,
+            "unnecessary_model_invocation_rate": round(unnecessary_rate, 4),
+            "tool_routing_accuracy": round((correct_tool_invocations + correct_model_invocations) / total_tasks, 4),
+            "status": "PASS: 0% Unnecessary Model Invocations" if unnecessary_model_invocations == 0 else "FAIL: Redundant Model Used",
+            "details": details,
+        }
+
+    def run_tool_failure_experiment(self) -> Dict[str, Any]:
+        """
+        Section 33: Tool Failure Experiment.
+        Artificially triggers tool failures and verifies graceful fallback recovery.
+        """
+        from aeon.tools.base import BaseTool
+        from aeon.tools.types import ToolType, ToolCategory, ToolCapability, ToolRequest, ToolResult, ToolCost, ToolStatus
+        from aeon.tools.registry import ToolRegistry
+        from aeon.tools.tool_controller import ToolController
+        from aeon import AEON
+
+        # Faulty tool that fails on execution
+        class FailingCalculator(BaseTool):
+            name = "calculator"
+            tool_type = ToolType.CALCULATOR
+            category = ToolCategory.DETERMINISTIC
+            def can_handle(self, request: ToolRequest):
+                return ToolCapability(
+                    tool_type=ToolType.CALCULATOR,
+                    category=ToolCategory.DETERMINISTIC,
+                    supported_task_types=[request.task_type],
+                    deterministic=True,
+                )
+            def execute(self, request: ToolRequest):
+                return ToolResult(
+                    tool_type=ToolType.CALCULATOR,
+                    status=ToolStatus.TIMEOUT,
+                    output=None,
+                    error="Simulated hardware/kernel execution timeout",
+                    actual_cost=ToolCost(latency_ms=10.0, cost_usd=0.000001),
+                )
+
+        faulty_reg = ToolRegistry()
+        faulty_reg.register(FailingCalculator())
+        faulty_controller = ToolController(tool_registry=faulty_reg)
+
+        aeon = AEON(policy="voi", memory=False, tools=True, tool_controller=faulty_controller)
+
+        # Execute query that targets calculator
+        res = aeon.run("What is 17.5% of 840?", tools=True)
+
+        fallback_succeeded = res.answer is not None and len(res.answer) > 0
+        used_fallback_model = res.route != "tool" or res.trace.fallback_occurred
+
+        return {
+            "initial_tool": "failing_calculator",
+            "injected_fault": "TIMEOUT",
+            "fallback_succeeded": fallback_succeeded,
+            "fallback_route": res.route,
+            "final_model": res.trace.model,
+            "final_answer": res.answer,
+            "status": "PASS: Gracefully rerouted after tool failure without terminating request" if fallback_succeeded else "FAIL",
+        }
+
+    def run_budget_experiment(self) -> Dict[str, Any]:
+        """
+        Section 34: Budget Experiment.
+        Tests strategy adaptation across low ($0.0001), medium ($0.001), and high ($0.01) budgets.
+        """
+        from aeon.benchmarks.synthetic_workload import generate_phase4_mixed_workload
+        from aeon import AEON
+
+        budgets = [0.00005, 0.0005, 0.01]
+        workload = generate_phase4_mixed_workload(count=15)
+        aeon = AEON(policy="voi", memory=True, tools=True)
+
+        results = {}
+        for b in budgets:
+            traces = []
+            for r in workload:
+                req = r.model_copy(deep=True)
+                req.cost_budget_usd = b
+                res = aeon.run(req)
+                traces.append(res.trace)
+            agg = self.collector.compute_aggregate_metrics(traces)
+            tool_pct = sum(1 for t in traces if t.tool_used is not None) / float(len(traces))
+            results[f"budget_${b}"] = {
+                "mean_cost_usd": agg.mean_cost_usd,
+                "accuracy": agg.accuracy,
+                "tool_usage_ratio": round(tool_pct, 3),
+                "quality_per_dollar": agg.quality_per_dollar,
+            }
+        return results
+
+

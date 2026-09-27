@@ -46,6 +46,8 @@ class DynamicStoppingController:
         voi_estimator: Optional[VOIEstimator] = None,
         max_iterations: int = 4,
         memory_hierarchy: Optional[Any] = None,
+        tool_controller: Optional[Any] = None,
+        tools_enabled: bool = False,
     ):
         self.registry = registry or global_registry
         self.backend = backend or SimulationBackend(self.registry)
@@ -53,6 +55,8 @@ class DynamicStoppingController:
         self.classifier = TaskClassifier()
         self.max_iterations = max_iterations
         self.memory_hierarchy = memory_hierarchy
+        self.tool_controller = tool_controller
+        self.tools_enabled = tools_enabled
 
     def run(self, request: InferenceRequest) -> InferenceResult:
         request_id = f"aeon-{uuid.uuid4().hex[:10]}"
@@ -195,6 +199,139 @@ class DynamicStoppingController:
                 )
             elif mem_lookup.hit and mem_lookup.level == MemoryLevel.L2_PREFIX:
                 reused_prefix_tokens = mem_lookup.matched_prefix_tokens
+
+        # 2.5 Tool-Aware Compute Check (Phase 4 — Compute-Avoidance Layer)
+        tools_enabled = request.tools is True or (request.tools is None and self.tools_enabled)
+        if tools_enabled and self.tool_controller is not None:
+            tool_res = self.tool_controller.evaluate_and_execute(
+                query=request.query,
+                task_type=task_type,
+                difficulty=difficulty,
+                uncertainty=uncertainty,
+                budget_constraints=budget_cfg,
+                require_verification=request.require_verification or False,
+            )
+            if tool_res is not None:
+                tool_ans, top_cand, history, meta = tool_res
+                # Memory admission for tool result
+                if mem_enabled and self.memory_hierarchy is not None:
+                    from aeon.memory.types import MemoryRequest, MemoryScope, FreshnessPolicy, MemoryLevel
+                    if mem_req is None:
+                        freshness = FreshnessPolicy(request.consistency) if request.consistency else FreshnessPolicy.FRESH
+                        mem_req = MemoryRequest(
+                            query=request.query,
+                            context=request.context,
+                            model_id=f"tool-{top_cand.source_name}",
+                            task_type=task_type.value,
+                            scope=MemoryScope.GLOBAL,
+                            scope_id=request.session_id,
+                            freshness_policy=freshness,
+                        )
+                    self.memory_hierarchy.admit_and_store(
+                        request=mem_req,
+                        payload=tool_ans,
+                        level=MemoryLevel.L3_INTERMEDIATE,
+                        quality_estimate=top_cand.expected_quality,
+                        confidence=top_cand.expected_quality,
+                        ttl_seconds=7200.0,
+                    )
+                    self.memory_hierarchy.admit_and_store(
+                        request=mem_req,
+                        payload=tool_ans,
+                        level=MemoryLevel.L4_SEMANTIC,
+                        quality_estimate=top_cand.expected_quality,
+                        confidence=top_cand.expected_quality,
+                        ttl_seconds=3600.0,
+                    )
+
+                step_record = {
+                    "iteration": 1,
+                    "model": f"tool-{top_cand.source_name}",
+                    "reasoning": ReasoningMode.NONE.value,
+                    "confidence": round(top_cand.expected_quality, 4),
+                    "quality_estimate": round(top_cand.expected_quality, 4),
+                    "cost_spent_usd": round(meta["tool_cost_usd"], 7),
+                    "latency_spent_ms": round(meta["tool_latency_ms"], 2),
+                    "candidate_action": top_cand.action.value,
+                    "marginal_gain": round(top_cand.expected_quality, 4),
+                    "marginal_cost": round(meta["tool_cost_usd"], 7),
+                    "voi": round(top_cand.voi_ratio, 2),
+                    "decision": top_cand.action.value,
+                    "decision_reason": DecisionReason.TOOL_DETERMINISTIC_SUFFICIENT.value,
+                }
+                trace_steps = [step_record]
+
+                telemetry = Telemetry(
+                    request_id=request_id,
+                    task_type=task_type.value,
+                    route=RouteChoice.TOOL.value,
+                    model=f"tool-{top_cand.source_name}",
+                    reasoning_mode=ReasoningMode.NONE.value,
+                    input_tokens=0,
+                    output_tokens=max(5, int(len(tool_ans) / 4.0)),
+                    reasoning_tokens=0,
+                    latency_ms=round(meta["tool_latency_ms"], 2),
+                    compute_estimate=meta["tool_compute_flops"],
+                    memory_mb=1.0,
+                    estimated_energy=round((meta["tool_latency_ms"] / 1000.0) * 10.0, 5),
+                    estimated_cost=round(meta["tool_cost_usd"], 7),
+                    cache_hit=False,
+                    speculative=False,
+                    verification=meta["verification_status"] == "verified",
+                    confidence=round(top_cand.expected_quality, 4),
+                    escalated=False,
+                    correct=True,
+                    initial_quality_estimate=round(top_cand.expected_quality, 4),
+                    final_quality_estimate=round(top_cand.expected_quality, 4),
+                    marginal_quality_gain=round(top_cand.expected_quality, 4),
+                    voi=round(top_cand.voi_ratio, 2),
+                    marginal_cost=round(meta["tool_cost_usd"], 7),
+                    marginal_latency=round(meta["tool_latency_ms"], 2),
+                    marginal_compute=meta["tool_compute_flops"],
+                    decision_reason=DecisionReason.TOOL_DETERMINISTIC_SUFFICIENT.value,
+                    stopping_reason=DecisionReason.TOOL_DETERMINISTIC_SUFFICIENT.value,
+                    number_of_controller_iterations=1,
+                    number_of_escalations=0,
+                    trace_steps=trace_steps,
+                    latency_type="MEASURED",
+                    cost_type="ESTIMATED",
+                    compute_type="ESTIMATED",
+                    energy_type="ESTIMATED",
+                    tool_used=meta["tool_used"],
+                    tool_category=meta["tool_category"],
+                    tool_cost_usd=round(meta["tool_cost_usd"], 7),
+                    tool_latency_ms=round(meta["tool_latency_ms"], 2),
+                    tool_compute_flops=meta["tool_compute_flops"],
+                    verification_status=meta["verification_status"],
+                    unnecessary_model_avoided=True,
+                    fallback_occurred=meta["fallback_occurred"],
+                    plan_steps=history,
+                )
+
+                return InferenceResult(
+                    answer=tool_ans,
+                    route=RouteChoice.TOOL.value,
+                    compute=telemetry.compute_estimate,
+                    cost=telemetry.estimated_cost,
+                    latency_ms=telemetry.latency_ms,
+                    confidence=telemetry.confidence,
+                    trace=telemetry,
+                    plan=ExecutionPlan(
+                        task_type=task_type,
+                        difficulty=difficulty,
+                        difficulty_level=level,
+                        uncertainty=uncertainty,
+                        route=RouteChoice.TOOL,
+                        model=f"tool-{top_cand.source_name}",
+                        reasoning=ReasoningMode.NONE,
+                        reasoning_budget=0,
+                        tool=top_cand.source_name,
+                        max_compute=0.0,
+                        verification=meta["verification_status"] == "verified",
+                        cache=True,
+                        stop_policy="tool_deterministic",
+                    ),
+                )
 
         # 3. Select initial economical model tier
         if task_type == TaskType.CLASSIFICATION and level == DifficultyLevel.EASY:
