@@ -42,6 +42,8 @@ class ComputeController:
         memory_hierarchy: Optional[Any] = None,
         tool_controller: Optional[Any] = None,
         tools_enabled: bool = False,
+        speculation_controller: Optional[Any] = None,
+        speculation_enabled: bool = False,
     ):
         self.registry = registry or global_registry
         self.backend = backend or SimulationBackend(self.registry)
@@ -54,6 +56,8 @@ class ComputeController:
         self.memory_hierarchy = memory_hierarchy
         self.tool_controller = tool_controller
         self.tools_enabled = tools_enabled
+        self.speculation_controller = speculation_controller
+        self.speculation_enabled = speculation_enabled
 
     def plan_execution(self, request: InferenceRequest) -> ExecutionPlan:
         """Analyze request and generate structured execution plan."""
@@ -278,6 +282,60 @@ class ComputeController:
                 )
 
         plan = self.plan_execution(request)
+
+        # Speculation Check (Phase 5 — Speculative & Token-Efficient Inference)
+        spec_enabled = request.speculation is True or (request.speculation is None and self.speculation_enabled)
+        if spec_enabled and self.speculation_controller is not None and plan.route != RouteChoice.DECISION_MODEL:
+            from aeon.speculation.types import SpeculationStrategy
+            preferred_strat = SpeculationStrategy(request.speculation_strategy) if request.speculation_strategy else None
+            spec_ans, spec_state, spec_tel = self.speculation_controller.execute_generation(
+                target_model=plan.model,
+                query=request.query,
+                context=request.context,
+                task_type=plan.task_type,
+                requested_tokens=min(100, max(20, int(len(request.query) * 0.8))),
+                preferred_strategy=preferred_strat,
+                preferred_draft_model=request.draft_model,
+            )
+            spec_tel.task_type = plan.task_type.value
+            spec_tel.route = plan.route.value
+            spec_tel.request_id = request_id
+
+            if mem_enabled and self.memory_hierarchy is not None and spec_ans:
+                from aeon.memory.types import MemoryRequest, MemoryScope, FreshnessPolicy, MemoryLevel
+                freshness = FreshnessPolicy(request.consistency) if request.consistency else FreshnessPolicy.FRESH
+                mem_store_req = MemoryRequest(
+                    query=request.query,
+                    context=request.context,
+                    model_id=plan.model,
+                    task_type=plan.task_type.value,
+                    scope=MemoryScope.GLOBAL,
+                    scope_id=request.session_id,
+                    freshness_policy=freshness,
+                )
+                self.memory_hierarchy.admit_and_store(
+                    request=mem_store_req,
+                    payload=spec_ans,
+                    level=MemoryLevel.L4_SEMANTIC,
+                    quality_estimate=0.90,
+                    confidence=spec_tel.confidence,
+                    ttl_seconds=3600.0,
+                )
+
+            plan.speculation_strategy = spec_state.current_strategy.value
+            plan.draft_model = spec_state.draft_model
+            plan.draft_length = spec_state.draft_length
+
+            return InferenceResult(
+                answer=spec_ans,
+                route=plan.route.value,
+                compute=spec_tel.compute_estimate,
+                cost=spec_tel.estimated_cost,
+                latency_ms=spec_tel.latency_ms,
+                confidence=spec_tel.confidence,
+                trace=spec_tel,
+                plan=plan,
+            )
 
         # If cascade mode is explicitly active and not on decision model
         if self.use_cascade and plan.route != RouteChoice.DECISION_MODEL:

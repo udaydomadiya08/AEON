@@ -859,4 +859,208 @@ class BenchmarkHarness:
             }
         return results
 
+    def run_phase5(self) -> Dict[str, AggregateMetrics]:
+        """
+        Phase 5 Comparative Benchmark (Section 21 & 29).
+        Evaluates Standard Decoding vs Always-On Speculation vs AEON Adaptive Speculation.
+        """
+        from aeon.benchmarks.synthetic_workload import generate_phase5_speculation_workload
+        from aeon.speculation.types import SpeculationStrategy
+        from aeon import AEON
+
+        wl_dict = generate_phase5_speculation_workload()
+        # Flatten all categories into a representative 20-query test set
+        workload = []
+        for cat_queries in wl_dict.values():
+            workload.extend(cat_queries)
+
+        results: Dict[str, AggregateMetrics] = {}
+
+        # 1. Standard Decoding (No speculation)
+        aeon_std = AEON(policy="rules", memory=False, tools=False, speculation=False)
+        traces_std = []
+        for r in workload:
+            req = r.model_copy(deep=True)
+            req.speculation = False
+            res = aeon_std.run(req)
+            traces_std.append(res.trace)
+        results["1. Standard Decoding"] = calculate_aggregate_metrics("1. Standard Decoding", traces_std)
+
+        # 2. Always-On Speculation (Always forces draft model speculation)
+        aeon_always = AEON(policy="rules", memory=False, tools=False, speculation=True)
+        traces_always = []
+        for r in workload:
+            req = r.model_copy(deep=True)
+            req.speculation = True
+            req.speculation_strategy = SpeculationStrategy.DRAFT_MODEL.value
+            res = aeon_always.run(req)
+            traces_always.append(res.trace)
+        results["2. Always-On Speculation"] = calculate_aggregate_metrics("2. Always-On Speculation", traces_always)
+
+        # 3. AEON Adaptive Speculation (VOI controller dynamically chooses standard vs draft vs n-gram)
+        aeon_adaptive = AEON(policy="voi", memory=True, tools=True, speculation=True)
+        traces_adaptive = []
+        for r in workload:
+            req = r.model_copy(deep=True)
+            req.speculation = True
+            res = aeon_adaptive.run(req)
+            traces_adaptive.append(res.trace)
+        results["3. AEON Adaptive Speculation"] = calculate_aggregate_metrics("3. AEON Adaptive Speculation", traces_adaptive)
+
+        return results
+
+    def run_speculation_ablation_study(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Phase 5 Component Ablation Study (Section 22).
+        Measures the distinct contribution of each controller component.
+        """
+        from aeon.benchmarks.synthetic_workload import generate_phase5_speculation_workload
+        from aeon.speculation.types import SpeculationStrategy, SpeculationConfig
+        from aeon.speculation.controller import SpeculationController
+        from aeon import AEON
+
+        wl_dict = generate_phase5_speculation_workload()
+        workload = []
+        for cat_queries in wl_dict.values():
+            workload.extend(cat_queries)
+
+        ablations = [
+            ("Full AEON Adaptive", SpeculationConfig(enabled=True)),
+            ("Standard Decoding (No Spec)", SpeculationConfig(enabled=False)),
+            ("Always-On Draft (No Selection)", SpeculationConfig(enabled=True, strategies=[SpeculationStrategy.DRAFT_MODEL])),
+            ("Without Adaptive Draft Length", SpeculationConfig(enabled=True, candidate_draft_lengths=[4])),
+            ("Without Acceptance Learning", SpeculationConfig(enabled=True, learning_rate=0.0)),
+            ("Without N-Gram", SpeculationConfig(enabled=True, strategies=[SpeculationStrategy.STANDARD, SpeculationStrategy.DRAFT_MODEL])),
+        ]
+
+        out: Dict[str, Dict[str, Any]] = {}
+        for name, cfg in ablations:
+            ctrl = SpeculationController(config=cfg)
+            aeon = AEON(policy="voi", memory=True, tools=True, speculation=True, speculation_controller=ctrl)
+            traces = []
+            for r in workload:
+                req = r.model_copy(deep=True)
+                res = aeon.run(req)
+                traces.append(res.trace)
+            agg = calculate_aggregate_metrics(name, traces)
+            mean_acc = sum(t.acceptance_rate for t in traces) / float(len(traces))
+            mean_speedup = sum(t.realized_speedup for t in traces) / float(len(traces))
+            out[name] = {
+                "quality": agg.accuracy,
+                "mean_latency_ms": agg.mean_latency_ms,
+                "mean_cost_usd": agg.mean_cost_usd,
+                "quality_per_dollar": agg.quality_per_dollar,
+                "mean_acceptance_rate": round(mean_acc, 3),
+                "mean_speedup": round(mean_speedup, 2),
+            }
+        return out
+
+    def run_speculation_break_even_experiment(self) -> Dict[str, Any]:
+        """
+        Phase 5 Economic Break-Even Analysis (Section 24).
+        Calculates theoretical break-even points across target models, draft lengths, and draft models.
+        """
+        from aeon.speculation.economics import SpeculationEconomics
+        from aeon.speculation.types import SpeculationStrategy
+        from aeon.models.model_registry import global_registry
+
+        econ = SpeculationEconomics()
+        target_70b = global_registry.get("aeon-large-70b")
+        target_7b = global_registry.get("aeon-medium-7b")
+        draft_0_5b = global_registry.get("aeon-draft-0.5b")
+        draft_1_5b = global_registry.get("aeon-small-1.5b")
+
+        results = {}
+        lengths = [1, 2, 4, 8, 16]
+
+        # 70B Target with 0.5B Draft
+        be_70b_05 = {}
+        for l in lengths:
+            be = econ.calculate_break_even(target_70b, draft_0_5b, draft_length=l, strategy=SpeculationStrategy.DRAFT_MODEL)
+            be_70b_05[f"draft_length_{l}"] = {
+                "min_acceptance_rate": be.min_acceptance_rate,
+                "expected_speedup": be.expected_speedup,
+                "cost_parity_acceptance": be.cost_parity_acceptance,
+            }
+        results["70B_Target_0.5B_Draft"] = be_70b_05
+
+        # 70B Target with N-Gram Strategy
+        be_70b_ngram = {}
+        for l in lengths:
+            be = econ.calculate_break_even(target_70b, None, draft_length=l, strategy=SpeculationStrategy.NGRAM)
+            be_70b_ngram[f"draft_length_{l}"] = {
+                "min_acceptance_rate": be.min_acceptance_rate,
+                "expected_speedup": be.expected_speedup,
+            }
+        results["70B_Target_NGram"] = be_70b_ngram
+
+        # 7B Target with 0.5B Draft
+        be_7b_05 = {}
+        for l in lengths:
+            be = econ.calculate_break_even(target_7b, draft_0_5b, draft_length=l, strategy=SpeculationStrategy.DRAFT_MODEL)
+            be_7b_05[f"draft_length_{l}"] = {
+                "min_acceptance_rate": be.min_acceptance_rate,
+                "expected_speedup": be.expected_speedup,
+            }
+        results["7B_Target_0.5B_Draft"] = be_7b_05
+
+        return results
+
+    def run_speculation_workload_breakdown(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Phase 5 Workload-Specific Breakdown (Section 21 & 29).
+        Compares Standard vs Always-On vs AEON Adaptive across all 8 workload types.
+        """
+        from aeon.benchmarks.synthetic_workload import generate_phase5_speculation_workload
+        from aeon.speculation.types import SpeculationStrategy
+        from aeon import AEON
+
+        wl_dict = generate_phase5_speculation_workload()
+        out = {}
+
+        aeon_std = AEON(policy="rules", memory=False, tools=False, speculation=False)
+        aeon_always = AEON(policy="rules", memory=False, tools=False, speculation=True)
+        aeon_adaptive = AEON(policy="voi", memory=True, tools=True, speculation=True)
+
+        for cat, queries in wl_dict.items():
+            # Standard
+            std_lat = []
+            for q in queries:
+                r = q.model_copy(deep=True)
+                r.speculation = False
+                res = aeon_std.run(r)
+                std_lat.append(res.latency_ms)
+            mean_std_lat = sum(std_lat) / float(len(std_lat))
+
+            # Always-On
+            always_lat = []
+            for q in queries:
+                r = q.model_copy(deep=True)
+                r.speculation = True
+                r.speculation_strategy = SpeculationStrategy.DRAFT_MODEL.value
+                res = aeon_always.run(r)
+                always_lat.append(res.latency_ms)
+            mean_always_lat = sum(always_lat) / float(len(always_lat))
+
+            # Adaptive
+            adaptive_lat = []
+            strats_chosen = []
+            for q in queries:
+                r = q.model_copy(deep=True)
+                r.speculation = True
+                res = aeon_adaptive.run(r)
+                adaptive_lat.append(res.latency_ms)
+                strats_chosen.append(res.trace.speculation_strategy or "standard")
+            mean_adaptive_lat = sum(adaptive_lat) / float(len(adaptive_lat))
+
+            out[cat] = {
+                "standard_latency_ms": round(mean_std_lat, 2),
+                "always_on_latency_ms": round(mean_always_lat, 2),
+                "aeon_adaptive_latency_ms": round(mean_adaptive_lat, 2),
+                "speedup_vs_standard": round(mean_std_lat / max(0.01, mean_adaptive_lat), 2),
+                "preferred_strategy": max(set(strats_chosen), key=strats_chosen.count),
+            }
+        return out
+
+
 

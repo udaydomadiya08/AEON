@@ -31,13 +31,26 @@ def cli():
 @click.option("--memory", is_flag=True, default=False, help="Enable AEON multi-level memory hierarchy")
 @click.option("--memory-policy", default="balanced", type=click.Choice(["balanced", "latency_first", "cost_first", "quality_first"]), help="Memory hierarchy management policy")
 @click.option("--tools", is_flag=True, default=False, help="Enable AEON tool-aware computation (Calculator, Python, SymPy, Retrieval, Structured)")
+@click.option("--speculate", is_flag=True, default=False, help="Enable AEON speculative and token-efficient inference (Phase 5)")
+@click.option("--spec-strategy", default=None, type=click.Choice(["standard", "draft_model", "ngram", "multi_token"]), help="Force specific speculation strategy")
+@click.option("--draft-model", default=None, type=str, help="Specific draft model name to deploy")
 @click.option("--trace", is_flag=True, help="Display detailed step-by-step controller VOI, memory, and tool trace")
-def run(query: str, context: str, sla: float, budget: float, policy: str, cascade: bool, target_quality: float, memory: bool, memory_policy: str, tools: bool, trace: bool):
+def run(query: str, context: str, sla: float, budget: float, policy: str, cascade: bool, target_quality: float, memory: bool, memory_policy: str, tools: bool, speculate: bool, spec_strategy: str, draft_model: str, trace: bool):
     """Run inference on a query with AEON adaptive compute optimization."""
     chosen_policy = "cascade" if cascade else policy
     from aeon.memory.hierarchy import global_memory_hierarchy
     from aeon.tools.tool_controller import global_tool_controller
-    aeon = AEON(policy=chosen_policy, memory=memory, memory_policy=memory_policy, memory_hierarchy=global_memory_hierarchy, tools=tools, tool_controller=global_tool_controller)
+    from aeon.speculation.controller import global_speculation_controller
+    aeon = AEON(
+        policy=chosen_policy,
+        memory=memory,
+        memory_policy=memory_policy,
+        memory_hierarchy=global_memory_hierarchy,
+        tools=tools,
+        tool_controller=global_tool_controller,
+        speculation=speculate,
+        speculation_controller=global_speculation_controller,
+    )
     result = aeon.run(
         query=query,
         context=context,
@@ -46,6 +59,9 @@ def run(query: str, context: str, sla: float, budget: float, policy: str, cascad
         target_quality=target_quality,
         memory=memory,
         tools=tools,
+        speculation=speculate,
+        speculation_strategy=spec_strategy,
+        draft_model=draft_model,
     )
 
     if trace:
@@ -79,6 +95,19 @@ def run(query: str, context: str, sla: float, budget: float, policy: str, cascad
                 for s in result.trace.plan_steps:
                     click.echo(f"  - Step {s.get('step_id')}: {s.get('tool')} ({s.get('action')}) -> {s.get('status')}")
             click.echo("────────────────────────────────────────────────")
+
+        if speculate or result.trace.speculative:
+            click.echo("\n──────────── AEON SPECULATIVE INFERENCE ────────────")
+            click.echo(f"Strategy:          {result.trace.speculation_strategy or 'standard'}")
+            click.echo(f"Action:            {result.trace.speculation_action or 'NONE'}")
+            click.echo(f"Draft Model:       {result.trace.draft_model or 'none'} (Length: {result.trace.draft_length})")
+            click.echo(f"Drafted Tokens:    {result.trace.drafted_tokens} | Accepted: {result.trace.accepted_tokens} | Rejected: {result.trace.rejected_tokens}")
+            click.echo(f"Acceptance Rate:   {result.trace.acceptance_rate*100:.1f}% (Avg/round: {result.trace.average_accepted_per_round})")
+            click.echo(f"Draft Latency:     {result.trace.draft_latency_ms:.2f} ms | Verify: {result.trace.verification_latency_ms:.2f} ms")
+            click.echo(f"Realized Speedup:  {result.trace.realized_speedup:.2f}x (Expected: {result.trace.expected_speedup:.2f}x)")
+            click.echo(f"Break-Even Rate:   {result.trace.break_even_acceptance*100:.1f}%")
+            click.echo(f"Execution Mode:    {result.trace.speculation_mode}")
+            click.echo("────────────────────────────────────────────────────")
 
         if result.trace.trace_steps:
             click.echo("\n────────────── COMPUTE CONTROLLER ──────────────")
@@ -227,21 +256,56 @@ def memory_benchmark():
 
 
 @cli.command()
-@click.option("--phase", type=click.Choice(["1", "2", "3", "4"]), default="2", help="Benchmark phase (1, 2, 3, or 4)")
+@click.option("--phase", type=click.Choice(["1", "2", "3", "4", "5"]), default="2", help="Benchmark phase (1, 2, 3, 4, or 5)")
 @click.option("--ablation", is_flag=True, help="Run Phase 2 VOI systematic ablation study")
 @click.option("--memory-ablation", is_flag=True, help="Run Phase 3 memory tier ablation study")
 @click.option("--tool-ablation", is_flag=True, help="Run Phase 4 tool ablation study")
 @click.option("--tool-vs-model", is_flag=True, help="Run Section 31 Model vs Tool experiment")
 @click.option("--tool-failure", is_flag=True, help="Run Section 33 Tool failure and fallback recovery experiment")
 @click.option("--budget-study", is_flag=True, help="Run Section 34 budget sensitivity experiment")
+@click.option("--speculation-ablation", is_flag=True, help="Run Phase 5 speculation component ablation study")
+@click.option("--speculation-break-even", is_flag=True, help="Run Phase 5 economic break-even experiment")
+@click.option("--speculation-workload", is_flag=True, help="Run Phase 5 workload breakdown across 8 categories")
 @click.option("--target-exp", is_flag=True, help="Run target quality (>=0.85) experiment")
 @click.option("--semantic-safety", is_flag=True, help="Run Section 27 semantic cache false-positive safety experiment")
 @click.option("--freshness", is_flag=True, help="Run Section 28 freshness experiment")
 @click.option("--memory-pressure", is_flag=True, help="Run Section 29 memory pressure experiment")
 @click.option("--voi", is_flag=True, help="Run Phase 2 VOI evaluation")
-def benchmark(phase: str, ablation: bool, memory_ablation: bool, tool_ablation: bool, tool_vs_model: bool, tool_failure: bool, budget_study: bool, target_exp: bool, semantic_safety: bool, freshness: bool, memory_pressure: bool, voi: bool):
+def benchmark(phase: str, ablation: bool, memory_ablation: bool, tool_ablation: bool, tool_vs_model: bool, tool_failure: bool, budget_study: bool, speculation_ablation: bool, speculation_break_even: bool, speculation_workload: bool, target_exp: bool, semantic_safety: bool, freshness: bool, memory_pressure: bool, voi: bool):
     """Run comparative benchmark suite and ablations."""
     harness = BenchmarkHarness()
+
+    if speculation_ablation:
+        click.echo("\nRunning AEON Phase 5 Speculation Component Ablation Study...\n")
+        results = harness.run_speculation_ablation_study()
+        click.echo("=" * 105)
+        click.echo(
+            f"{'Ablation Configuration':<32} | {'Quality':<7} | {'Latency':<9} | {'Cost ($)':<10} | {'Acceptance':<10} | {'Speedup':<8} | {'Quality/$':<11}"
+        )
+        click.echo("=" * 105)
+        for name, d in results.items():
+            lat_str = f"{d['mean_latency_ms']:.1f}ms"
+            cost_str = f"${d['mean_cost_usd']:.5f}"
+            acc_str = f"{d['mean_acceptance_rate']*100:.1f}%"
+            speed_str = f"{d['mean_speedup']:.2f}x"
+            click.echo(
+                f"{name:<32} | {d['quality']*100:>6.1f}% | {lat_str:>9} | {cost_str:>10} | {acc_str:>10} | {speed_str:>8} | {d['quality_per_dollar']:>11.0f}"
+            )
+        click.echo("=" * 105)
+        click.echo()
+        return
+
+    if speculation_break_even:
+        click.echo("\nRunning Phase 5 Economic Break-Even Analysis Across Models and Draft Lengths...\n")
+        res = harness.run_speculation_break_even_experiment()
+        click.echo(json.dumps(res, indent=2))
+        return
+
+    if speculation_workload:
+        click.echo("\nRunning Phase 5 Generation Workload Breakdown (8 Modalities)...\n")
+        res = harness.run_speculation_workload_breakdown()
+        click.echo(json.dumps(res, indent=2))
+        return
 
     if tool_ablation:
         click.echo("\nRunning AEON Phase 4 Tool Ablation Study...\n")
@@ -349,6 +413,24 @@ def benchmark(phase: str, ablation: bool, memory_ablation: bool, tool_ablation: 
                 f"{name:<30} | {d['achieved_quality']*100:>7.1f}% | {met_str:>6} | {d['total_tokens']:>8} | {cost_str:>10} | {lat_str:>10} | {d['quality_per_dollar']:>10.0f}"
             )
         click.echo("=" * 95)
+        click.echo()
+        return
+
+    if phase == "5":
+        click.echo("\nRunning AEON Phase 5 Speculative & Token-Efficient Inference Benchmark Suite...\n")
+        results = harness.run_phase5()
+        click.echo("=" * 115)
+        click.echo(
+            f"{'Configuration':<32} | {'Quality':<7} | {'Latency':<9} | {'Cost ($)':<10} | {'Tokens':<8} | {'Quality/$':<11} | {'Quality/TFLOP':<13}"
+        )
+        click.echo("=" * 115)
+        for name, m in results.items():
+            lat_str = f"{m.mean_latency_ms:.1f}ms"
+            cost_str = f"${m.total_cost_usd:.5f}"
+            click.echo(
+                f"{name:<32} | {m.accuracy*100:>6.1f}% | {lat_str:>9} | {cost_str:>10} | {m.total_tokens:>8} | {m.quality_per_dollar:>11.0f} | {m.quality_per_tflops:>13.4f}"
+            )
+        click.echo("=" * 115)
         click.echo()
         return
 
@@ -482,6 +564,91 @@ def tools_benchmark():
     click.echo(f"Fallback Succeeded:                {tfe['fallback_succeeded']}")
     click.echo(f"Fallback Route:                    {tfe['fallback_route']}")
     click.echo(f"Status:                            {tfe['status']}\n")
+
+
+# =========================================================================
+# Phase 5 Speculation Commands (Section 20)
+# =========================================================================
+
+@cli.group()
+def speculation():
+    """AEON Speculative and Token-Efficient Inference Controller (Phase 5)."""
+    pass
+
+
+@speculation.command(name="stats")
+def speculation_stats():
+    """Display online acceptance statistics and learned strategy profiles."""
+    from aeon.speculation.controller import global_speculation_controller
+    stats = global_speculation_controller.estimator.get_summary()
+    click.echo("\n==================== AEON SPECULATION STATS ====================")
+    click.echo(f"Global Acceptance EMA:        {stats['global_ema']*100:.1f}%")
+    click.echo(f"Overall Acceptance Rate:      {stats['overall_acceptance_rate']*100:.1f}%")
+    click.echo(f"Rounds Tracked:               {stats['rounds_tracked']}")
+    click.echo("\nPer-Strategy Acceptance EMA:")
+    for strat, val in stats['strategy_ema'].items():
+        click.echo(f"  - {strat:<20}: {val*100:.1f}%")
+    click.echo("\nPer-Draft-Length Acceptance EMA:")
+    for length, val in sorted(stats['draft_length_ema'].items(), key=lambda kv: int(kv[0])):
+        click.echo(f"  - Length {length:<3}: {val*100:.1f}%")
+    click.echo("================================================================\n")
+
+
+@speculation.command(name="benchmark")
+def speculation_benchmark():
+    """Run dedicated Phase 5 speculative decoding benchmark suite."""
+    harness = BenchmarkHarness()
+    click.echo("\nRunning AEON Phase 5 Speculative & Token-Efficient Inference Benchmark Suite...\n")
+    results = harness.run_phase5()
+    click.echo("=" * 115)
+    click.echo(
+        f"{'Configuration':<32} | {'Quality':<7} | {'Latency':<9} | {'Cost ($)':<10} | {'Tokens':<8} | {'Quality/$':<11} | {'Quality/TFLOP':<13}"
+    )
+    click.echo("=" * 115)
+    for name, m in results.items():
+        lat_str = f"{m.mean_latency_ms:.1f}ms"
+        cost_str = f"${m.total_cost_usd:.5f}"
+        click.echo(
+            f"{name:<32} | {m.accuracy*100:>6.1f}% | {lat_str:>9} | {cost_str:>10} | {m.total_tokens:>8} | {m.quality_per_dollar:>11.0f} | {m.quality_per_tflops:>13.4f}"
+        )
+    click.echo("=" * 115)
+    click.echo()
+
+
+@speculation.command(name="compare")
+def speculation_compare():
+    """Compare performance across all 8 generation workload categories."""
+    harness = BenchmarkHarness()
+    click.echo("\nRunning Phase 5 Generation Workload Breakdown (8 Modalities)...\n")
+    res = harness.run_speculation_workload_breakdown()
+    click.echo("=" * 95)
+    click.echo(
+        f"{'Workload Modality':<24} | {'Standard':<10} | {'Always-On':<10} | {'Adaptive':<10} | {'Speedup':<8} | {'Selected'}"
+    )
+    click.echo("=" * 95)
+    for cat, d in res.items():
+        click.echo(
+            f"{cat:<24} | {d['standard_latency_ms']:>8.1f}ms | {d['always_on_latency_ms']:>8.1f}ms | {d['aeon_adaptive_latency_ms']:>8.1f}ms | {d['speedup_vs_standard']:>7.2f}x | {d['preferred_strategy']}"
+        )
+    click.echo("=" * 95)
+    click.echo()
+
+
+@speculation.command(name="config")
+def speculation_config():
+    """Inspect active speculative decoding configuration."""
+    from aeon.speculation.controller import global_speculation_controller
+    cfg = global_speculation_controller.config
+    dump_fn = getattr(cfg, "model_dump", cfg.dict)
+    click.echo(json.dumps(dump_fn(), indent=2))
+
+
+@speculation.command(name="break-even")
+def speculation_break_even():
+    """Run theoretical economic break-even experiment across models and draft lengths."""
+    harness = BenchmarkHarness()
+    res = harness.run_speculation_break_even_experiment()
+    click.echo(json.dumps(res, indent=2))
 
 
 if __name__ == "__main__":

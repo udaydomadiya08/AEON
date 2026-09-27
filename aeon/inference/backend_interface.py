@@ -36,3 +36,27 @@ class BaseInferenceBackend(ABC):
         - "correct": Optional[bool]
         """
         pass
+
+    def supports_speculation(self) -> bool:
+        """Return whether backend supports speculative decoding."""
+        return True
+
+    def supports_draft_model(self) -> bool:
+        """Return whether backend supports draft model speculation."""
+        return True
+
+    def supports_ngram(self) -> bool:
+        """Return whether backend supports prompt/context n-gram speculation."""
+        return True
+
+    def supports_multi_token_prediction(self) -> bool:
+        """Return whether backend supports multi-token prediction heads."""
+        return False
+
+    def generate_draft(self, draft_model: str, prefix: str, draft_length: int) -> list:
+        """Draft candidate tokens using specified draft model or heuristic."""
+        return []
+
+    def verify_speculation(self, target_model: str, prefix: str, draft_tokens: list) -> Dict[str, Any]:
+        """Verify draft tokens against target model logits/distribution."""
+        return {"accepted_tokens": draft_tokens, "rejected_tokens": []}

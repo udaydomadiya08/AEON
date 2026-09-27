@@ -367,3 +367,56 @@ def generate_phase4_mixed_workload(count: int = 30) -> List[InferenceRequest]:
     return out
 
 
+def generate_phase5_speculation_workload() -> Dict[str, List[InferenceRequest]]:
+    """
+    Dedicated Phase 5 Benchmark Workloads conforming to Section 21:
+    A. Highly predictable generation (High speculation speedup)
+    B. Normal natural-language generation (Moderate benefit)
+    C. Difficult reasoning (Low speculation benefit)
+    D. Code generation (Structured syntactic patterns)
+    E. Repetitive generation (N-gram optimal)
+    F. Short outputs (Speculation overhead penalty)
+    G. Long outputs (Compounded speedup)
+    H. Low acceptance workload (Verifies AEON disables speculation)
+    """
+    return {
+        "predictable": [
+            InferenceRequest(query="List the months of the year in order from January to December:", task_hint="factual", speculation=True),
+            InferenceRequest(query="Count from 1 to 20 in sequential order with commas:", task_hint="factual", speculation=True),
+            InferenceRequest(query="Output the standard English alphabet letters from A to Z:", task_hint="factual", speculation=True),
+        ],
+        "natural_language": [
+            InferenceRequest(query="Describe the history and architectural beauty of the city of Kyoto.", task_hint="creative", speculation=True),
+            InferenceRequest(query="Summarize the primary causes of the Industrial Revolution in Europe.", task_hint="factual", speculation=True),
+            InferenceRequest(query="Explain the biological process of photosynthesis in plants.", task_hint="factual", speculation=True),
+        ],
+        "difficult_reasoning": [
+            InferenceRequest(query="Deduce whether P equals NP and prove why polynomial time reduction fails.", task_hint="reasoning", speculation=True),
+            InferenceRequest(query="Solve this adversarial logic riddle involving 3 truth-tellers and 2 liars.", task_hint="reasoning", speculation=True),
+            InferenceRequest(query="Construct a formal topological proof of the Brouwer fixed-point theorem.", task_hint="reasoning", speculation=True),
+        ],
+        "code_generation": [
+            InferenceRequest(query="def binary_search(arr, target): Write standard Python implementation with boundary checks.", task_hint="code", speculation=True),
+            InferenceRequest(query="class LRUCache: Implement get and put methods in Python with doubly linked list.", task_hint="code", speculation=True),
+            InferenceRequest(query="Write a SQL query selecting top 5 customers by total order amount grouped by year.", task_hint="code", speculation=True),
+        ],
+        "repetitive": [
+            InferenceRequest(query="Echo the following configuration block 3 times: [Server: host=localhost, port=8080, protocol=http, timeout=30s]", task_hint="extraction", speculation=True),
+            InferenceRequest(query="Repeat the word 'ACCEPTED' 20 times separated by hyphens:", task_hint="factual", speculation=True),
+            InferenceRequest(query="Repeat schema: user_id, user_name, user_email, user_role, user_status across 5 records.", task_hint="code", speculation=True),
+        ],
+        "short_output": [
+            InferenceRequest(query="Answer with one word: What color is the clear daytime sky?", task_hint="factual", speculation=True),
+            InferenceRequest(query="Is 17 a prime number? Answer Yes or No.", task_hint="classification", speculation=True),
+        ],
+        "long_output": [
+            InferenceRequest(query="Write an extensive 200-word analysis on the economic impact of global semiconductor supply chains.", task_hint="creative", speculation=True),
+            InferenceRequest(query="Generate a complete end-to-end technical tutorial on building microservices in Python.", task_hint="code", speculation=True),
+        ],
+        "low_acceptance": [
+            InferenceRequest(query="Generate an unpredictable sequence of arbitrary random characters and symbols: #!9*kQ~", task_hint="creative", speculation=True),
+            InferenceRequest(query="Write a chaotic surrealist non-sequitur sentence where every word is unlinked.", task_hint="creative", speculation=True),
+        ],
+    }
+
+

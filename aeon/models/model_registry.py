@@ -42,6 +42,37 @@ class ModelRegistry:
         else:
             return self._profiles.get(SMALL_MODEL_PROFILE.name, SMALL_MODEL_PROFILE)
 
+    def list_draft_models(self, target_model: Optional[str] = None) -> List[ModelProfile]:
+        """List all registered draft or dual-role models, optionally filtered by target compatibility."""
+        drafts = [m for m in self._profiles.values() if m.role in ["DRAFT", "DUAL"]]
+        if target_model:
+            return [m for m in drafts if self.is_compatible(m.name, target_model)]
+        return drafts
+
+    def is_compatible(self, draft_model_name: str, target_model_name: str) -> bool:
+        """Verify whether draft_model is architecturally and parameter-compatible with target_model."""
+        draft = self._profiles.get(draft_model_name)
+        target = self._profiles.get(target_model_name)
+        if not draft or not target:
+            return False
+        if draft.name == target.name:
+            return False
+        # Draft model must have strictly fewer parameters than target model
+        if draft.param_count_b >= target.param_count_b:
+            return False
+        # Explicit compatibility list check
+        if draft.compatible_targets and target.name not in draft.compatible_targets:
+            return False
+        return True
+
+    def get_best_draft_model(self, target_model_name: str) -> Optional[ModelProfile]:
+        """Select the most economical compatible draft model for a target model."""
+        candidates = self.list_draft_models(target_model_name)
+        if not candidates:
+            return None
+        # Sort by parameter count / latency to pick the most efficient draft
+        return sorted(candidates, key=lambda m: (m.param_count_b, m.base_latency_ms))[0]
+
 
 # Global default registry instance
 global_registry = ModelRegistry()

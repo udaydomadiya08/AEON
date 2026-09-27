@@ -25,6 +25,10 @@ from aeon.types import (
     VOIResult,
     ControllerAction,
     DecisionReason,
+    TaskType,
+    DifficultyLevel,
+    RouteChoice,
+    ReasoningMode,
 )
 from aeon.controller.compute_controller import ComputeController
 from aeon.controller.dynamic_stopping import DynamicStoppingController
@@ -72,7 +76,25 @@ from aeon.tools.structured_tool import StructuredComputationTool
 from aeon.tools.verifier import ToolVerifier
 from aeon.tools.registry import ToolRegistry, global_tool_registry
 
-__version__ = "0.4.0"
+from aeon.speculation.controller import SpeculationController, global_speculation_controller
+from aeon.speculation.types import (
+    SpeculationStrategy,
+    SpeculationAction,
+    DraftTokenProposal,
+    VerificationResult as SpeculationVerificationResult,
+    BreakEvenAnalysis,
+    SpeculationCandidate,
+    SpeculationState,
+    SpeculationConfig,
+)
+from aeon.speculation.economics import SpeculationEconomics
+from aeon.speculation.acceptance_estimator import AdaptiveAcceptanceEstimator
+from aeon.speculation.draft_optimizer import AdaptiveDraftLengthOptimizer
+from aeon.speculation.ngram import NgramSpeculationEngine
+from aeon.speculation.verifier import SpeculationVerifier
+from aeon.speculation.strategies import SpeculativeStrategySelector
+
+__version__ = "0.5.0"
 
 
 class AEON:
@@ -81,7 +103,8 @@ class AEON:
     Provides simple inference interface: aeon.run(query) -> InferenceResult
     with comprehensive telemetry, routing breakdown, and compute accounting.
     Supports Phase 1 rule-based routing, cascades, Phase 2 VOI dynamic stopping,
-    Phase 3 multi-level memory hierarchy, and Phase 4 tool-aware computation.
+    Phase 3 multi-level memory hierarchy, Phase 4 tool-aware computation,
+    and Phase 5 adaptive speculative inference.
     """
 
     def __init__(
@@ -97,6 +120,8 @@ class AEON:
         memory_hierarchy: Optional[AEONMemoryHierarchy] = None,
         tools: bool = False,
         tool_controller: Optional[ToolController] = None,
+        speculation: bool = False,
+        speculation_controller: Optional[SpeculationController] = None,
     ):
         self.registry = registry or global_registry
         self.backend = backend or SimulationBackend(self.registry)
@@ -105,6 +130,7 @@ class AEON:
         self.memory_policy = memory_policy
         self.memory_enabled = memory
         self.tools_enabled = tools
+        self.speculation_enabled = speculation
 
         # Initialize or assign memory hierarchy
         if memory_hierarchy is not None:
@@ -124,6 +150,9 @@ class AEON:
         # Initialize or assign tool controller
         self.tool_controller = tool_controller or global_tool_controller
 
+        # Initialize or assign speculation controller
+        self.speculation_controller = speculation_controller or global_speculation_controller
+
         self.voi_controller = DynamicStoppingController(
             backend=self.backend,
             registry=self.registry,
@@ -131,6 +160,8 @@ class AEON:
             memory_hierarchy=self.memory_hierarchy,
             tool_controller=self.tool_controller,
             tools_enabled=self.tools_enabled,
+            speculation_controller=self.speculation_controller,
+            speculation_enabled=self.speculation_enabled,
         )
         self.rules_controller = ComputeController(
             backend=self.backend,
@@ -139,6 +170,8 @@ class AEON:
             memory_hierarchy=self.memory_hierarchy,
             tool_controller=self.tool_controller,
             tools_enabled=self.tools_enabled,
+            speculation_controller=self.speculation_controller,
+            speculation_enabled=self.speculation_enabled,
         )
 
     @property
@@ -150,6 +183,11 @@ class AEON:
     def tools(self) -> ToolController:
         """Access the tool-aware computation controller."""
         return self.tool_controller
+
+    @property
+    def speculation(self) -> SpeculationController:
+        """Access the speculative and token-efficient inference controller."""
+        return self.speculation_controller
 
     def run(
         self,
@@ -165,6 +203,9 @@ class AEON:
         consistency: Optional[str] = None,
         tools: Optional[bool] = None,
         require_verification: Optional[bool] = None,
+        speculation: Optional[bool] = None,
+        speculation_strategy: Optional[str] = None,
+        draft_model: Optional[str] = None,
     ) -> InferenceResult:
         """Run an inference request through the AEON economically-optimized engine."""
         # Parse budget dictionary if provided
@@ -178,6 +219,7 @@ class AEON:
 
         active_memory = memory if memory is not None else self.memory_enabled
         active_tools = tools if tools is not None else self.tools_enabled
+        active_speculation = speculation if speculation is not None else self.speculation_enabled
 
         if isinstance(query, str):
             req = InferenceRequest(
@@ -193,6 +235,9 @@ class AEON:
                 consistency=consistency,
                 tools=active_tools,
                 require_verification=require_verification,
+                speculation=active_speculation,
+                speculation_strategy=speculation_strategy,
+                draft_model=draft_model,
             )
         else:
             req = query
@@ -206,6 +251,14 @@ class AEON:
                 req.tools = tools
             elif req.tools is None and self.tools_enabled:
                 req.tools = True
+            if speculation is not None:
+                req.speculation = speculation
+            elif req.speculation is None and self.speculation_enabled:
+                req.speculation = True
+            if speculation_strategy and not req.speculation_strategy:
+                req.speculation_strategy = speculation_strategy
+            if draft_model and not req.draft_model:
+                req.draft_model = draft_model
             if require_verification is not None:
                 req.require_verification = require_verification
             if session_id and not req.session_id:
@@ -235,6 +288,10 @@ __all__ = [
     "VOIResult",
     "ControllerAction",
     "DecisionReason",
+    "TaskType",
+    "DifficultyLevel",
+    "RouteChoice",
+    "ReasoningMode",
     "BudgetConstraints",
     "ComputeController",
     "DynamicStoppingController",
@@ -275,4 +332,20 @@ __all__ = [
     "ToolRegistry",
     "global_tool_registry",
     "global_registry",
+    "SpeculationController",
+    "global_speculation_controller",
+    "SpeculationStrategy",
+    "SpeculationAction",
+    "DraftTokenProposal",
+    "SpeculationVerificationResult",
+    "BreakEvenAnalysis",
+    "SpeculationCandidate",
+    "SpeculationState",
+    "SpeculationConfig",
+    "SpeculationEconomics",
+    "AdaptiveAcceptanceEstimator",
+    "AdaptiveDraftLengthOptimizer",
+    "NgramSpeculationEngine",
+    "SpeculationVerifier",
+    "SpeculativeStrategySelector",
 ]

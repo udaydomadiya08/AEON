@@ -48,6 +48,8 @@ class DynamicStoppingController:
         memory_hierarchy: Optional[Any] = None,
         tool_controller: Optional[Any] = None,
         tools_enabled: bool = False,
+        speculation_controller: Optional[Any] = None,
+        speculation_enabled: bool = False,
     ):
         self.registry = registry or global_registry
         self.backend = backend or SimulationBackend(self.registry)
@@ -57,6 +59,8 @@ class DynamicStoppingController:
         self.memory_hierarchy = memory_hierarchy
         self.tool_controller = tool_controller
         self.tools_enabled = tools_enabled
+        self.speculation_controller = speculation_controller
+        self.speculation_enabled = speculation_enabled
 
     def run(self, request: InferenceRequest) -> InferenceResult:
         request_id = f"aeon-{uuid.uuid4().hex[:10]}"
@@ -375,6 +379,7 @@ class DynamicStoppingController:
         trace_steps: List[Dict[str, Any]] = []
         initial_q_est: Optional[float] = None
         last_voi_result: Optional[VOIResult] = None
+        last_spec_tel: Optional[Telemetry] = None
 
         # 4. Dynamic Compute Loop
         while not state.is_terminal and state.iteration < self.max_iterations:
@@ -394,8 +399,37 @@ class DynamicStoppingController:
                 verification=False,
             )
 
-            # Execute model inference step
-            res = self.backend.generate(request, plan)
+            # Execute model inference step (with speculative decoding if enabled)
+            spec_enabled = request.speculation is True or (request.speculation is None and self.speculation_enabled)
+            if spec_enabled and self.speculation_controller is not None and plan.route != RouteChoice.DECISION_MODEL:
+                from aeon.speculation.types import SpeculationStrategy
+                preferred_strat = SpeculationStrategy(request.speculation_strategy) if request.speculation_strategy else None
+                spec_ans, spec_st, spec_tel = self.speculation_controller.execute_generation(
+                    target_model=state.current_model,
+                    query=request.query,
+                    context=request.context,
+                    task_type=state.task_type,
+                    requested_tokens=min(100, max(20, int(len(request.query) * 0.8))),
+                    preferred_strategy=preferred_strat,
+                    preferred_draft_model=request.draft_model,
+                )
+                last_spec_tel = spec_tel
+                res = {
+                    "answer": spec_ans,
+                    "input_tokens": 15,
+                    "output_tokens": spec_st.generated_tokens,
+                    "reasoning_tokens": 0,
+                    "latency_ms": spec_tel.latency_ms,
+                    "confidence": spec_tel.confidence,
+                    "compute_estimate": spec_tel.compute_estimate,
+                    "estimated_energy": spec_tel.estimated_energy,
+                    "estimated_cost": spec_tel.estimated_cost,
+                    "speculative": spec_st.current_strategy != SpeculationStrategy.STANDARD,
+                    "verification": True,
+                    "correct": True,
+                }
+            else:
+                res = self.backend.generate(request, plan)
             latest_answer = res.get("answer", "")
             latest_correct = res.get("correct")
             step_confidence = float(res.get("confidence", 0.80))
@@ -556,8 +590,27 @@ class DynamicStoppingController:
             estimated_energy=round(state.energy_spent_joules, 4),
             estimated_cost=round(state.monetary_cost_usd, 7),
             cache_hit=is_mem_hit,
-            speculative=False,
-            verification=False,
+            speculative=last_spec_tel.speculative if last_spec_tel else False,
+            verification=last_spec_tel.verification if last_spec_tel else False,
+            speculation_strategy=last_spec_tel.speculation_strategy if last_spec_tel else None,
+            speculation_action=last_spec_tel.speculation_action if last_spec_tel else None,
+            draft_model=last_spec_tel.draft_model if last_spec_tel else None,
+            draft_length=last_spec_tel.draft_length if last_spec_tel else 0,
+            drafted_tokens=last_spec_tel.drafted_tokens if last_spec_tel else 0,
+            accepted_tokens=last_spec_tel.accepted_tokens if last_spec_tel else 0,
+            rejected_tokens=last_spec_tel.rejected_tokens if last_spec_tel else 0,
+            acceptance_rate=last_spec_tel.acceptance_rate if last_spec_tel else 0.0,
+            average_accepted_per_round=last_spec_tel.average_accepted_per_round if last_spec_tel else 0.0,
+            draft_latency_ms=last_spec_tel.draft_latency_ms if last_spec_tel else 0.0,
+            verification_latency_ms=last_spec_tel.verification_latency_ms if last_spec_tel else 0.0,
+            speculation_compute_flops=last_spec_tel.speculation_compute_flops if last_spec_tel else 0.0,
+            expected_speedup=last_spec_tel.expected_speedup if last_spec_tel else 1.0,
+            realized_speedup=last_spec_tel.realized_speedup if last_spec_tel else 1.0,
+            expected_utility=last_spec_tel.expected_utility if last_spec_tel else 0.0,
+            realized_utility=last_spec_tel.realized_utility if last_spec_tel else 0.0,
+            break_even_acceptance=last_spec_tel.break_even_acceptance if last_spec_tel else 0.0,
+            speculation_mode=last_spec_tel.speculation_mode if last_spec_tel else "SIMULATED_SPECULATIVE_DECODING",
+            speculation_rounds=last_spec_tel.speculation_rounds if last_spec_tel else 0,
             confidence=round(state.confidence, 4),
             escalated=(escalations > 0),
             correct=latest_correct,

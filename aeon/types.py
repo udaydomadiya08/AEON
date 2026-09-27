@@ -72,6 +72,10 @@ class ModelProfile(BaseModel):
     min_memory_mb: float
     flops_per_token: float
     is_decision_model: bool = False
+    role: str = "TARGET"  # TARGET, DRAFT, DUAL
+    architecture: str = "transformer"
+    supported_devices: List[str] = Field(default_factory=lambda: ["cpu", "mps", "cuda"])
+    compatible_targets: List[str] = Field(default_factory=list)
 
 
 class ControllerAction(str, Enum):
@@ -95,6 +99,13 @@ class ControllerAction(str, Enum):
     STRUCTURED_COMPUTE = "STRUCTURED_COMPUTE"
     EXECUTE_PLAN = "EXECUTE_PLAN"
     FALLBACK_REROUTE = "FALLBACK_REROUTE"
+    # Phase 5 Speculation Actions
+    STANDARD_DECODE = "STANDARD_DECODE"
+    SPECULATE_DRAFT_MODEL = "SPECULATE_DRAFT_MODEL"
+    SPECULATE_NGRAM = "SPECULATE_NGRAM"
+    SPECULATE_MULTI_TOKEN = "SPECULATE_MULTI_TOKEN"
+    ADAPT_DRAFT_LENGTH = "ADAPT_DRAFT_LENGTH"
+    DISABLE_SPECULATION = "DISABLE_SPECULATION"
 
 
 class DecisionReason(str, Enum):
@@ -119,6 +130,16 @@ class DecisionReason(str, Enum):
     TOOL_FAILED_REROUTE = "TOOL_FAILED_REROUTE"
     MODEL_UNNECESSARY = "MODEL_UNNECESSARY"
     MODEL_REQUIRED_FOR_REASONING = "MODEL_REQUIRED_FOR_REASONING"
+    # Phase 5 Speculation Decision Reasons
+    SPECULATION_VIABLE = "SPECULATION_VIABLE"
+    SPECULATION_FASTER_EXPECTED = "SPECULATION_FASTER_EXPECTED"
+    SPECULATION_REJECTED_LOW_ACCEPTANCE = "SPECULATION_REJECTED_LOW_ACCEPTANCE"
+    SPECULATION_REJECTED_HIGH_OVERHEAD = "SPECULATION_REJECTED_HIGH_OVERHEAD"
+    SPECULATION_REJECTED_NO_COMPATIBLE_DRAFT = "SPECULATION_REJECTED_NO_COMPATIBLE_DRAFT"
+    SPECULATION_DETERIORATED_FALLBACK = "SPECULATION_DETERIORATED_FALLBACK"
+    SPECULATION_LENGTH_REDUCED = "SPECULATION_LENGTH_REDUCED"
+    SPECULATION_LENGTH_INCREASED = "SPECULATION_LENGTH_INCREASED"
+    STANDARD_DECODE_PREFERRED = "STANDARD_DECODE_PREFERRED"
 
 
 class UtilityWeights(BaseModel):
@@ -220,6 +241,27 @@ class Telemetry(BaseModel):
     fallback_occurred: bool = False
     plan_steps: List[Dict[str, Any]] = Field(default_factory=list)
 
+    # Phase 5 Speculative & Token-Efficient Inference Telemetry
+    speculation_strategy: Optional[str] = None
+    speculation_action: Optional[str] = None
+    draft_model: Optional[str] = None
+    draft_length: int = 0
+    drafted_tokens: int = 0
+    accepted_tokens: int = 0
+    rejected_tokens: int = 0
+    acceptance_rate: float = 0.0
+    average_accepted_per_round: float = 0.0
+    draft_latency_ms: float = 0.0
+    verification_latency_ms: float = 0.0
+    speculation_compute_flops: float = 0.0
+    expected_speedup: float = 1.0
+    realized_speedup: float = 1.0
+    expected_utility: float = 0.0
+    realized_utility: float = 0.0
+    break_even_acceptance: float = 0.0
+    speculation_mode: str = "SIMULATED_SPECULATIVE_DECODING"
+    speculation_rounds: int = 0
+
 
 class ComputeState(BaseModel):
     """
@@ -287,6 +329,10 @@ class InferenceRequest(BaseModel):
     tools: Optional[bool] = None
     tool_budget: Optional[Dict[str, Any]] = None
     require_verification: Optional[bool] = None
+    speculation: Optional[bool] = None
+    speculation_strategy: Optional[str] = None
+    draft_model: Optional[str] = None
+    max_draft_length: Optional[int] = None
 
 
 class ExecutionPlan(BaseModel):
@@ -304,6 +350,9 @@ class ExecutionPlan(BaseModel):
     verification: bool = False
     cache: bool = True
     stop_policy: str = "confidence"
+    speculation_strategy: Optional[str] = None
+    draft_model: Optional[str] = None
+    draft_length: int = 0
 
 
 class InferenceResult(BaseModel):
