@@ -1,0 +1,266 @@
+"""
+Value-of-Information (VOI) and Diminishing Returns Estimator for AEON.
+
+Evaluates whether an additional unit of computation (model escalation, reasoning steps)
+is economically justified by marginal quality gains vs. marginal resource costs.
+Conforms to AEON Specification Sections 5, 7, 8, 9, 10, and 15.
+"""
+
+import math
+from typing import Dict, Any, Optional, Tuple, List
+from aeon.types import (
+    ComputeState,
+    ControllerAction,
+    DecisionReason,
+    VOIResult,
+    UtilityWeights,
+    RouteChoice,
+    ReasoningMode,
+    TaskType,
+    DifficultyLevel,
+)
+from aeon.models.model_registry import ModelRegistry, global_registry
+
+
+class VOIEstimator:
+    """
+    Evaluates marginal value of information across candidate computational actions.
+    Models diminishing returns on test-time compute and enforces economic rationality.
+    """
+
+    def __init__(
+        self,
+        registry: Optional[ModelRegistry] = None,
+        weights: Optional[UtilityWeights] = None,
+        voi_threshold: float = 25.0,  # Minimum quality gain per dollar to justify continuation
+        high_confidence_stop_threshold: float = 0.90,
+    ):
+        self.registry = registry or global_registry
+        self.weights = weights or UtilityWeights()
+        self.voi_threshold = voi_threshold
+        self.high_confidence_stop_threshold = high_confidence_stop_threshold
+
+    def evaluate_candidates(
+        self,
+        state: ComputeState,
+        target_quality: Optional[float] = None,
+    ) -> VOIResult:
+        """
+        Evaluate candidate actions from the current compute state and select
+        the optimal action according to marginal net utility and VOI.
+        """
+        # 1. Check if current confidence is already very high and task is solved
+        if state.confidence >= self.high_confidence_stop_threshold:
+            return self._build_stop_result(
+                state,
+                reason=DecisionReason.STOP_HIGH_CONFIDENCE,
+                marginal_utility=0.0,
+            )
+
+        # 2. Check if target quality is already achieved
+        if target_quality is not None and state.current_quality_estimate >= target_quality:
+            return self._build_stop_result(
+                state,
+                reason=DecisionReason.STOP_TARGET_QUALITY_REACHED,
+                marginal_utility=0.0,
+            )
+
+        # 3. Check budget exhaustion
+        if (state.remaining_cost_budget is not None and state.remaining_cost_budget <= 0.000001) or \
+           (state.remaining_latency_ms is not None and state.remaining_latency_ms <= 10.0):
+            return self._build_stop_result(
+                state,
+                reason=DecisionReason.STOP_BUDGET_EXHAUSTED,
+                marginal_utility=0.0,
+            )
+
+        # 4. Generate candidate actions
+        candidates = self._generate_candidate_actions(state)
+        if not candidates:
+            return self._build_stop_result(
+                state,
+                reason=DecisionReason.STOP_LOW_VOI,
+                marginal_utility=0.0,
+            )
+
+        # 5. Evaluate VOI for each candidate
+        best_candidate: Optional[VOIResult] = None
+        best_marginal_utility = -float("inf")
+
+        for action, next_model, next_reasoning in candidates:
+            voi_res = self.estimate_action(state, action, next_model, next_reasoning, target_quality=target_quality)
+            
+            # Check budget constraints on candidate
+            if state.remaining_cost_budget is not None and voi_res.marginal_cost_usd > state.remaining_cost_budget:
+                continue
+            if state.remaining_latency_ms is not None and voi_res.marginal_latency_ms > state.remaining_latency_ms:
+                continue
+
+            if voi_res.marginal_utility > best_marginal_utility:
+                best_marginal_utility = voi_res.marginal_utility
+                best_candidate = voi_res
+
+        # 6. If no viable candidate has positive marginal utility or VOI >= threshold, stop
+        if best_candidate is None or not best_candidate.is_economically_viable:
+            return self._build_stop_result(
+                state,
+                reason=DecisionReason.STOP_LOW_VOI,
+                marginal_utility=0.0,
+            )
+
+        return best_candidate
+
+    def estimate_action(
+        self,
+        state: ComputeState,
+        action: ControllerAction,
+        next_model: str,
+        next_reasoning: ReasoningMode,
+        target_quality: Optional[float] = None,
+    ) -> VOIResult:
+        """Calculate exact marginal gains, costs, and VOI for a candidate action."""
+        current_q = state.current_quality_estimate
+        future_q = self.predict_future_quality(state, next_model, next_reasoning)
+        
+        # Diminishing returns: marginal gain shrinks as quality approaches 1.0 or reasoning steps increase
+        raw_gain = max(0.0, future_q - current_q)
+        diminishing_factor = math.exp(-0.25 * state.iteration)
+        marginal_quality_gain = round(raw_gain * diminishing_factor, 4)
+
+        # Marginal resource costs
+        profile = self.registry.get(next_model)
+        est_tokens = 60 if next_reasoning == ReasoningMode.DIRECT else (180 if next_reasoning == ReasoningMode.EXPLICIT else 90)
+        
+        marginal_cost_usd = (est_tokens / 1_000_000.0) * (profile.cost_per_1m_input_usd * 0.3 + profile.cost_per_1m_output_usd * 0.7)
+        marginal_latency_ms = profile.base_latency_ms + (est_tokens / profile.tokens_per_second) * 1000.0
+        marginal_compute_flops = 2.0 * (profile.param_count_b * 1e9) * est_tokens
+        marginal_energy_joules = (marginal_latency_ms / 1000.0) * (25.0 if profile.param_count_b < 5 else 120.0)
+
+        # If user explicitly requested target_quality that has not yet been achieved, adjust incentives
+        quality_weight = self.weights.quality
+        effective_threshold = self.voi_threshold
+        if target_quality is not None and current_q < target_quality:
+            quality_weight *= 3.0
+            effective_threshold = min(5.0, effective_threshold)
+
+        # Multi-objective utility: ΔU = Quality_gain - Σ λ_i * Cost_i
+        resource_penalty = (
+            self.weights.lambda_latency * marginal_latency_ms
+            + self.weights.lambda_cost * marginal_cost_usd
+            + self.weights.lambda_compute * marginal_compute_flops
+            + self.weights.lambda_energy * marginal_energy_joules
+        )
+        marginal_utility = round((quality_weight * marginal_quality_gain) - resource_penalty, 5)
+
+        # VOI ratio = Marginal Quality Gain / Marginal Cost USD
+        voi_ratio = (marginal_quality_gain / marginal_cost_usd) if marginal_cost_usd > 0 else 0.0
+
+        is_economically_viable = (voi_ratio >= effective_threshold) and (marginal_utility > 0.0)
+
+        reason = (
+            DecisionReason.ESCALATE_HIGH_EXPECTED_GAIN
+            if action == ControllerAction.ESCALATE_MODEL
+            else DecisionReason.CONTINUE_HIGH_VOI
+        )
+
+        return VOIResult(
+            action=action,
+            expected_current_quality=round(current_q, 4),
+            expected_future_quality=round(current_q + marginal_quality_gain, 4),
+            marginal_quality_gain=marginal_quality_gain,
+            marginal_cost_usd=round(marginal_cost_usd, 7),
+            marginal_latency_ms=round(marginal_latency_ms, 2),
+            marginal_compute_flops=marginal_compute_flops,
+            marginal_utility=marginal_utility,
+            voi_ratio=round(voi_ratio, 2),
+            voi_threshold=self.voi_threshold,
+            is_economically_viable=is_economically_viable,
+            reason=reason,
+            next_model=next_model,
+            next_reasoning_mode=next_reasoning,
+        )
+
+    def predict_future_quality(
+        self,
+        state: ComputeState,
+        target_model: str,
+        target_reasoning: ReasoningMode,
+    ) -> float:
+        """Predict expected quality for a model and reasoning mode given task difficulty."""
+        profile = self.registry.get(target_model)
+        if not profile:
+            return 0.50
+
+        base_quality = profile.quality_score
+        
+        # Difficulty penalty: higher difficulty lowers expected accuracy on smaller models
+        difficulty_sensitivity = 0.55 if profile.param_count_b < 2.0 else (0.35 if profile.param_count_b < 10.0 else 0.15)
+        adjusted_q = base_quality - (state.difficulty * difficulty_sensitivity)
+
+        # Reasoning mode boost
+        if target_reasoning == ReasoningMode.EXPLICIT:
+            reasoning_boost = 0.12 * state.difficulty
+        elif target_reasoning == ReasoningMode.LATENT:
+            reasoning_boost = 0.08 * state.difficulty
+        else:
+            reasoning_boost = 0.0
+
+        # Uncertainty dampener
+        uncertainty_penalty = 0.15 * state.uncertainty
+
+        return max(0.20, min(0.99, adjusted_q + reasoning_boost - uncertainty_penalty))
+
+    def _generate_candidate_actions(
+        self,
+        state: ComputeState,
+    ) -> List[Tuple[ControllerAction, str, ReasoningMode]]:
+        """Identify allowable computational transitions given current state."""
+        candidates = []
+
+        curr_model = state.current_model
+        # Transition 1: From Decision Model -> Small Model
+        if curr_model == "aeon-decision-jev":
+            candidates.append((ControllerAction.ESCALATE_MODEL, "aeon-small-1.5b", ReasoningMode.DIRECT))
+            candidates.append((ControllerAction.ESCALATE_MODEL, "aeon-small-1.5b", ReasoningMode.LATENT))
+        
+        # Transition 2: From Small Model -> Medium Model or Latent -> Explicit
+        elif curr_model == "aeon-small-1.5b":
+            if state.current_reasoning_mode == ReasoningMode.DIRECT:
+                candidates.append((ControllerAction.INCREASE_REASONING, "aeon-small-1.5b", ReasoningMode.LATENT))
+            candidates.append((ControllerAction.ESCALATE_MODEL, "aeon-medium-7b", ReasoningMode.LATENT))
+            candidates.append((ControllerAction.ESCALATE_MODEL, "aeon-medium-7b", ReasoningMode.EXPLICIT))
+
+        # Transition 3: From Medium Model -> Large Model or Latent -> Explicit
+        elif curr_model == "aeon-medium-7b":
+            if state.current_reasoning_mode != ReasoningMode.EXPLICIT:
+                candidates.append((ControllerAction.INCREASE_REASONING, "aeon-medium-7b", ReasoningMode.EXPLICIT))
+            candidates.append((ControllerAction.ESCALATE_MODEL, "aeon-large-70b", ReasoningMode.EXPLICIT))
+
+        # Transition 4: From Large Model with Latent -> Explicit
+        elif curr_model == "aeon-large-70b" and state.current_reasoning_mode != ReasoningMode.EXPLICIT:
+            candidates.append((ControllerAction.INCREASE_REASONING, "aeon-large-70b", ReasoningMode.EXPLICIT))
+
+        return candidates
+
+    def _build_stop_result(
+        self,
+        state: ComputeState,
+        reason: DecisionReason,
+        marginal_utility: float = 0.0,
+    ) -> VOIResult:
+        return VOIResult(
+            action=ControllerAction.STOP,
+            expected_current_quality=round(state.current_quality_estimate, 4),
+            expected_future_quality=round(state.current_quality_estimate, 4),
+            marginal_quality_gain=0.0,
+            marginal_cost_usd=0.0,
+            marginal_latency_ms=0.0,
+            marginal_compute_flops=0.0,
+            marginal_utility=marginal_utility,
+            voi_ratio=0.0,
+            voi_threshold=self.voi_threshold,
+            is_economically_viable=False,
+            reason=reason,
+            next_model=None,
+            next_reasoning_mode=None,
+        )

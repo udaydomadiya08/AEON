@@ -32,6 +32,9 @@ class AggregateMetrics(BaseModel):
     quality_per_dollar: float  # Accuracy / Total Cost USD
     quality_per_second: float  # Accuracy / Mean Latency (s)
     quality_per_tflops: float  # Accuracy / Mean TFLOPs
+    escalation_efficiency: float = 1.0  # successful escalations / total escalations
+    avoidable_compute_flops: float = 0.0  # actual compute - min required
+    mean_iterations: float = 1.0
 
 
 def calculate_aggregate_metrics(name: str, traces: List[Telemetry]) -> AggregateMetrics:
@@ -47,6 +50,7 @@ def calculate_aggregate_metrics(name: str, traces: List[Telemetry]) -> Aggregate
     total_cost = sum(t.estimated_cost for t in traces)
     total_energy = sum(t.estimated_energy for t in traces)
     escalations = sum(1 for t in traces if t.escalated)
+    iterations = [getattr(t, "number_of_controller_iterations", 1) for t in traces]
 
     # Accuracy calculation based on ground truth evaluation or confidence threshold
     correct_count = sum(1 for t in traces if t.correct is True or (t.correct is None and t.confidence >= 0.70))
@@ -57,6 +61,7 @@ def calculate_aggregate_metrics(name: str, traces: List[Telemetry]) -> Aggregate
     p95_lat = float(np.percentile(latencies, 95))
     mean_flops = total_flops / n
     mean_cost = total_cost / n
+    mean_iters = float(np.mean(iterations))
 
     mean_lat_s = mean_lat / 1000.0 if mean_lat > 0 else 0.001
     mean_tflops = mean_flops / 1e12 if mean_flops > 0 else 0.001
@@ -65,6 +70,26 @@ def calculate_aggregate_metrics(name: str, traces: List[Telemetry]) -> Aggregate
     quality_per_dollar = accuracy / safe_cost
     quality_per_second = accuracy / mean_lat_s
     quality_per_tflops = accuracy / mean_tflops
+
+    # Escalation efficiency: fraction of escalated requests that resulted in correct answer
+    escalated_traces = [t for t in traces if t.escalated]
+    if escalated_traces:
+        succ_esc = sum(1 for t in escalated_traces if t.correct is True or (t.correct is None and t.confidence >= 0.70))
+        escalation_eff = succ_esc / len(escalated_traces)
+    else:
+        escalation_eff = 1.0
+
+    # Avoidable compute estimate: excess compute spent compared to an oracle minimal path
+    # Oracle: Decision model for easy classification (1.6e8), Small model for easy (3e9), Medium for medium (1.4e10), Large for hard (1.4e11)
+    min_required_flops = 0.0
+    for t in traces:
+        if t.task_type == "classification":
+            min_required_flops += 1.6e8 * (t.input_tokens + 5)
+        elif "easy" in getattr(t, "route", "").lower():
+            min_required_flops += 3.0e9 * (t.input_tokens + 30)
+        else:
+            min_required_flops += 1.4e10 * (t.input_tokens + 60)
+    avoidable_compute = max(0.0, total_flops - min_required_flops)
 
     return AggregateMetrics(
         name=name,
@@ -84,4 +109,7 @@ def calculate_aggregate_metrics(name: str, traces: List[Telemetry]) -> Aggregate
         quality_per_dollar=round(quality_per_dollar, 2),
         quality_per_second=round(quality_per_second, 2),
         quality_per_tflops=round(quality_per_tflops, 4),
+        escalation_efficiency=round(escalation_eff, 4),
+        avoidable_compute_flops=round(avoidable_compute, 2),
+        mean_iterations=round(mean_iters, 2),
     )

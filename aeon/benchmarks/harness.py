@@ -133,6 +133,129 @@ class BenchmarkHarness:
 
         return results
 
+    def run_phase2(self, workload: List[InferenceRequest] = None) -> Dict[str, AggregateMetrics]:
+        """
+        Runs comprehensive Phase 2 evaluation comparing:
+        1. Dense LLM Baseline (70B)
+        2. Small Model Baseline (1.5B)
+        3. Static Cascade (1B -> 70B)
+        4. AEON Phase 1 (Adaptive Router)
+        5. AEON Phase 2 VOI (Dynamic Stopping Controller)
+        """
+        from aeon.controller.dynamic_stopping import DynamicStoppingController
+        from aeon.benchmarks.synthetic_workload import generate_synthetic_workload
+
+        workload = workload or generate_synthetic_workload(scale_factor=1)
+        results = self.run_all(workload)
+
+        # 5. AEON Phase 2 VOI Controller
+        voi_controller = DynamicStoppingController(backend=self.backend, registry=self.registry)
+        traces_phase2 = []
+        for req in workload:
+            res = voi_controller.run(req)
+            traces_phase2.append(res.trace)
+        results["AEON Phase 2 VOI"] = calculate_aggregate_metrics("AEON Phase 2 VOI", traces_phase2)
+
+        return results
+
+    def run_target_quality_experiment(
+        self,
+        target_quality: float = 0.85,
+        workload: List[InferenceRequest] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Core Research Experiment:
+        Evaluates how much compute, latency, and cost each architecture requires
+        to achieve target quality >= target_quality.
+        """
+        from aeon.controller.dynamic_stopping import DynamicStoppingController
+        from aeon.benchmarks.synthetic_workload import generate_synthetic_workload
+
+        workload = workload or generate_synthetic_workload(scale_factor=1)
+        experiment_results = {}
+
+        # Run Phase 2 with target_quality constraint
+        voi_controller = DynamicStoppingController(backend=self.backend, registry=self.registry)
+        target_workload = [
+            req.model_copy(update={"target_quality": target_quality, "sla_latency_ms": 10000.0})
+            for req in workload
+        ]
+        
+        all_metrics = self.run_all(workload)
+        phase2_traces = [voi_controller.run(req).trace for req in target_workload]
+        all_metrics["AEON Phase 2 (Target Quality)"] = calculate_aggregate_metrics("AEON Phase 2 (Target Quality)", phase2_traces)
+
+        for name, m in all_metrics.items():
+            experiment_results[name] = {
+                "achieved_quality": m.accuracy,
+                "target_met": m.accuracy >= target_quality,
+                "mean_latency_ms": m.mean_latency_ms,
+                "total_cost_usd": m.total_cost_usd,
+                "total_flops": m.total_compute_flops,
+                "total_tokens": m.total_tokens,
+                "quality_per_dollar": m.quality_per_dollar,
+            }
+
+        return experiment_results
+
+    def run_ablation_study(self, workload: List[InferenceRequest] = None) -> Dict[str, AggregateMetrics]:
+        """
+        Runs systematic ablation experiments isolating individual components:
+        1. Full AEON Phase 2
+        2. AEON - VOI (fixed cascade without marginal economic ratio)
+        3. AEON - Confidence (blind execution)
+        4. AEON - Difficulty (uniform difficulty assumption)
+        5. AEON - Cost-Awareness (λ_cost = 0)
+        6. AEON - Dynamic Stopping (runs to max iterations)
+        """
+        from aeon.controller.dynamic_stopping import DynamicStoppingController
+        from aeon.controller.voi_estimator import VOIEstimator
+        from aeon.types import UtilityWeights
+        from aeon.benchmarks.synthetic_workload import generate_synthetic_workload
+
+        workload = workload or generate_synthetic_workload(scale_factor=1)
+        ablations = {}
+
+        # 1. Full AEON Phase 2
+        full_ctrl = DynamicStoppingController(backend=self.backend, registry=self.registry)
+        ablations["1. Full AEON Phase 2"] = calculate_aggregate_metrics(
+            "1. Full AEON Phase 2", [full_ctrl.run(r).trace for r in workload]
+        )
+
+        # 2. AEON minus VOI (uses Phase 1 rule-based routing)
+        ablations["2. AEON - VOI"] = calculate_aggregate_metrics(
+            "2. AEON - VOI", [self.aeon_controller.run(r).trace for r in workload]
+        )
+
+        # 3. AEON minus Confidence Awareness (low threshold, never stops early on confidence)
+        no_conf_voi = VOIEstimator(self.registry, high_confidence_stop_threshold=1.0)
+        no_conf_ctrl = DynamicStoppingController(backend=self.backend, registry=self.registry, voi_estimator=no_conf_voi)
+        ablations["3. AEON - Confidence"] = calculate_aggregate_metrics(
+            "3. AEON - Confidence", [no_conf_ctrl.run(r).trace for r in workload]
+        )
+
+        # 4. AEON minus Difficulty Awareness (runs cascade with fixed medium threshold)
+        ablations["4. AEON - Difficulty"] = calculate_aggregate_metrics(
+            "4. AEON - Difficulty", [self.cascade_controller.run(r).trace for r in workload]
+        )
+
+        # 5. AEON minus Cost Awareness (λ_cost = 0, purely quality-driven)
+        no_cost_weights = UtilityWeights(quality=1.0, lambda_cost=0.0, lambda_latency=0.0)
+        no_cost_voi = VOIEstimator(self.registry, weights=no_cost_weights, voi_threshold=0.0)
+        no_cost_ctrl = DynamicStoppingController(backend=self.backend, registry=self.registry, voi_estimator=no_cost_voi)
+        ablations["5. AEON - Cost Awareness"] = calculate_aggregate_metrics(
+            "5. AEON - Cost Awareness", [no_cost_ctrl.run(r).trace for r in workload]
+        )
+
+        # 6. AEON minus Dynamic Stopping (always runs all iterations)
+        no_stop_voi = VOIEstimator(self.registry, voi_threshold=-1000.0, high_confidence_stop_threshold=1.0)
+        no_stop_ctrl = DynamicStoppingController(backend=self.backend, registry=self.registry, voi_estimator=no_stop_voi, max_iterations=3)
+        ablations["6. AEON - Dynamic Stopping"] = calculate_aggregate_metrics(
+            "6. AEON - Dynamic Stopping", [no_stop_ctrl.run(r).trace for r in workload]
+        )
+
+        return ablations
+
     def _to_telemetry(self, res: Dict[str, Any], plan: ExecutionPlan, req_id: str):
         from aeon.types import Telemetry
         return Telemetry(
