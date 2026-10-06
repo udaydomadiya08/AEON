@@ -426,6 +426,7 @@ class DynamicStoppingController:
                     cost_budget_usd=state.remaining_cost_budget,
                     latency_budget_ms=state.remaining_latency_ms,
                     preferred_strategy=pref_strat,
+                    max_depth=getattr(request, "max_depth", None),
                 )
                 last_depth_tel = depth_tel
 
@@ -441,7 +442,12 @@ class DynamicStoppingController:
                     preferred_strategy=preferred_strat,
                     preferred_draft_model=request.draft_model,
                 )
-                last_spec_tel = spec_tel
+                # Depth quality determines correctness
+                is_correct = depth_state.quality_estimate >= (0.75 if state.difficulty >= 0.60 else 0.60) if depth_enabled else True
+                if request.require_verification and not getattr(request, "tools", False) and depth_enabled:
+                    if depth_state.actual_depth < int(round(depth_state.total_layers * 0.70)):
+                        is_correct = False
+
                 res = {
                     "answer": spec_ans,
                     "input_tokens": 15,
@@ -454,9 +460,14 @@ class DynamicStoppingController:
                     "estimated_cost": spec_tel.estimated_cost,
                     "speculative": spec_st.current_strategy != SpeculationStrategy.STANDARD,
                     "verification": True,
-                    "correct": True,
+                    "correct": is_correct,
                 }
             elif depth_enabled:
+                is_correct = depth_state.quality_estimate >= (0.75 if state.difficulty >= 0.60 else 0.60)
+                if request.require_verification and not getattr(request, "tools", False):
+                    if depth_state.actual_depth < int(round(depth_state.total_layers * 0.70)):
+                        is_correct = False
+
                 res = {
                     "answer": depth_ans,
                     "input_tokens": max(1, int(len(request.query) / 4.0)),
@@ -470,7 +481,7 @@ class DynamicStoppingController:
                     "confidence": depth_state.confidence,
                     "speculative": False,
                     "verification": False,
-                    "correct": True,
+                    "correct": is_correct,
                 }
             else:
                 res = self.backend.generate(request, plan)

@@ -202,3 +202,19 @@ class DepthConfig(BaseModel):
     enable_adaptive_capacity: bool = True
     enable_verification_check: bool = True
     exit_patience: int = 1
+    calibrated: bool = True
+
+    def __init__(self, **data):
+        if "strategy" in data and "default_strategy" not in data:
+            data["default_strategy"] = data.pop("strategy")
+        if "early_exit_enabled" in data and "enable_early_exit" not in data:
+            data["enable_early_exit"] = data.pop("early_exit_enabled")
+        if "mod_enabled" in data and "enable_mod" not in data:
+            data["enable_mod"] = data.pop("mod_enabled")
+        if "adaptive_capacity" in data and "enable_adaptive_capacity" not in data:
+            data["enable_adaptive_capacity"] = data.pop("adaptive_capacity")
+        if "uniform_importance" in data and "enable_token_importance" not in data:
+            data["enable_token_importance"] = not data.pop("uniform_importance")
+        if "voi_threshold" in data and "voi_depth_threshold" not in data:
+            data["voi_depth_threshold"] = data.pop("voi_threshold")
+        super().__init__(**data)

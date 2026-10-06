@@ -51,11 +51,22 @@ class DepthController:
         self.config = config or DepthConfig()
         self.registry = registry or global_depth_registry
         self.cost_model = cost_model or global_depth_cost_model
-        self.importance_estimator = importance_estimator or global_token_importance_estimator
-        self.capacity_controller = capacity_controller or global_capacity_controller
+        if importance_estimator is not None:
+            self.importance_estimator = importance_estimator
+        elif not self.config.enable_token_importance:
+            from aeon.depth.types import TokenImportanceSignal
+            self.importance_estimator = TokenImportanceEstimator(mode=TokenImportanceSignal.UNIFORM)
+        else:
+            self.importance_estimator = global_token_importance_estimator
+
+        self.capacity_controller = capacity_controller or CapacityController(
+            default_capacity=self.config.mod_capacity_ratio
+        )
         self.mod_router = mod_router or global_mod_router
-        self.early_exit_evaluator = early_exit_evaluator or global_early_exit_evaluator
-        self.economics = economics or global_depth_economics
+        self.early_exit_evaluator = early_exit_evaluator or EarlyExitEvaluator(config=self.config)
+        self.economics = economics or DepthEconomics(
+            cost_model=self.cost_model, config=self.config, weights=weights
+        )
         self.backend = backend or global_simulation_depth_backend
         self.weights = weights or UtilityWeights()
 
@@ -138,15 +149,21 @@ class DepthController:
             viable = [c for c in candidates if c.is_viable]
             strategy = viable[0].strategy if viable else DepthStrategy.FULL_DEPTH
 
+        effective_max_depth = profile.total_layers
+        if kwargs.get("max_depth") is not None:
+            effective_max_depth = max(1, min(profile.total_layers, int(kwargs["max_depth"])))
+        elif hasattr(query, "max_depth") and getattr(query, "max_depth", None) is not None:
+            effective_max_depth = max(1, min(profile.total_layers, int(query.max_depth)))
+
         # 4. Initialize State
         state = DepthExecutionState(
             request_id=request_id,
             model_name=model_name,
             strategy=strategy,
             total_layers=profile.total_layers,
-            requested_depth=profile.total_layers,
+            requested_depth=effective_max_depth,
             min_depth=profile.min_safe_depth,
-            max_depth=profile.total_layers,
+            max_depth=effective_max_depth,
             tokens_count=tokens_count,
             uncertainty=uncertainty,
             execution_mode="SIMULATED_DEPTH_EXECUTION",
@@ -156,19 +173,23 @@ class DepthController:
             # 5. Route Computation based on selected strategy
             if strategy in [DepthStrategy.ADAPTIVE_MOD, DepthStrategy.FIXED_MOD, DepthStrategy.HYBRID_DEPTH] and profile.supported_mod and self.config.enable_mod:
                 # Mixture-of-Depths branch
-                capacity = self.capacity_controller.compute_capacity(
-                    difficulty=difficulty,
-                    uncertainty=uncertainty,
-                    target_quality=target_confidence or self.config.target_quality,
-                    cost_budget_usd=cost_budget_usd,
-                    latency_budget_ms=latency_budget_ms,
-                ) if strategy != DepthStrategy.FIXED_MOD else self.config.mod_capacity_ratio
+                capacity = (
+                    self.capacity_controller.compute_capacity(
+                        difficulty=difficulty,
+                        uncertainty=uncertainty,
+                        target_quality=target_confidence or self.config.target_quality,
+                        cost_budget_usd=cost_budget_usd,
+                        latency_budget_ms=latency_budget_ms,
+                    )
+                    if (strategy != DepthStrategy.FIXED_MOD and self.config.enable_adaptive_capacity)
+                    else self.config.mod_capacity_ratio
+                )
 
                 routed_tokens = self.mod_router.route_token_depths(
                     token_states=token_states,
                     total_layers=profile.total_layers,
-                    min_depth=profile.min_safe_depth,
-                    max_depth=profile.total_layers,
+                    min_depth=min(profile.min_safe_depth, effective_max_depth),
+                    max_depth=effective_max_depth,
                     capacity_ratio=capacity,
                 )
                 state.token_states = routed_tokens
@@ -232,6 +253,7 @@ class DepthController:
                             state.early_exit_reason = exit_rsn
                             break
 
+                target_layer = min(effective_max_depth, target_layer)
                 res = self.backend.execute_uniform_depth(query_str, profile, target_layer, tokens_count)
                 answer = res["answer"]
                 state.actual_depth = res["executed_layers"]
@@ -247,17 +269,18 @@ class DepthController:
                 state.shallow_tokens = tokens_count if res["executed_layers"] <= profile.min_safe_depth else 0
 
             else:
-                # Full Depth Baseline
-                res = self.backend.execute_uniform_depth(query_str, profile, profile.total_layers, tokens_count)
+                # Full Depth Baseline (clamped to effective_max_depth if constrained)
+                exec_layers = min(effective_max_depth, profile.total_layers)
+                res = self.backend.execute_uniform_depth(query_str, profile, exec_layers, tokens_count)
                 answer = res["answer"]
-                state.actual_depth = profile.total_layers
-                state.executed_layers = profile.total_layers
-                state.skipped_layers = 0
-                state.layer_execution_ratio = 1.0
+                state.actual_depth = res["executed_layers"]
+                state.executed_layers = res["executed_layers"]
+                state.skipped_layers = max(0, profile.total_layers - res["executed_layers"])
+                state.layer_execution_ratio = res["executed_layers"] / float(profile.total_layers)
                 state.estimated_flops = res["flops"]
                 state.estimated_latency_ms = res["latency_ms"]
                 state.estimated_cost_usd = res["cost_usd"]
-                state.avg_token_depth = float(profile.total_layers)
+                state.avg_token_depth = float(res["executed_layers"])
                 state.active_tokens = tokens_count
                 state.deep_tokens = tokens_count
                 state.shallow_tokens = 0
@@ -267,7 +290,10 @@ class DepthController:
             # Compute quality and confidence estimates
             curve_q = profile.quality_curve.get(state.actual_depth, 0.85)
             state.quality_estimate = max(0.50, min(1.0, curve_q - difficulty * 0.08))
-            state.confidence = max(0.20, min(0.99, state.quality_estimate - uncertainty * 0.10))
+            if getattr(self.config, "calibrated", True):
+                state.confidence = max(0.20, min(0.99, state.quality_estimate - uncertainty * 0.10))
+            else:
+                state.confidence = min(0.99, state.quality_estimate + 0.12)
 
             base_q = profile.quality_curve.get(profile.min_safe_depth, 0.65)
             state.marginal_depth_gain = max(0.0, state.quality_estimate - base_q)

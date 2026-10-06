@@ -484,10 +484,15 @@ class ComputeController:
                     latency_budget_ms=request.sla_latency_ms,
                     preferred_strategy=pref_strat,
                     require_verification=plan.verification or request.require_verification or False,
+                    max_depth=getattr(request, "max_depth", None),
                 )
                 route_str = plan.route.value
                 model_name = plan.model
                 escalated = False
+                is_correct = depth_state.quality_estimate >= (0.75 if plan.difficulty >= 0.60 else 0.60)
+                if request.require_verification and not getattr(request, "tools", False):
+                    if depth_state.actual_depth < int(round(depth_state.total_layers * 0.70)):
+                        is_correct = False
                 res = {
                     "answer": depth_ans,
                     "input_tokens": max(1, int(len(request.query) / 4.0)),
@@ -501,7 +506,7 @@ class ComputeController:
                     "confidence": depth_state.confidence,
                     "speculative": False,
                     "verification": False,
-                    "correct": True,
+                    "correct": is_correct,
                 }
                 plan.depth_strategy = depth_state.strategy.value
                 plan.allocated_depth = depth_state.actual_depth

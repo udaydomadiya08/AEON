@@ -818,3 +818,116 @@ def test_cli_run_with_adaptive_depth():
     res = runner.invoke(cli, ["run", "What is the boiling point of nitrogen?", "--adaptive-depth", "--trace"])
     assert res.exit_code == 0
     assert "AEON ADAPTIVE DEPTH & MOD" in res.output
+
+
+# =========================================================================
+# 13. Adversarial Audit Regression Tests (Post-Audit Hardening)
+# =========================================================================
+
+def test_depth_sensitivity_accuracy_tradeoff():
+    """Audit Test 1: Prove that shallow depth on hard tasks fails quality, while adaptive/full depth passes."""
+    aeon_shallow = AEON(policy="rules", adaptive_depth=True, max_depth=8)
+    res_shallow = aeon_shallow.run(
+        InferenceRequest(
+            query="Analyze the consistency of Zermelo-Fraenkel set theory without the Axiom of Choice and discuss Godel's second incompleteness theorem.",
+            ground_truth="Consistent relative to ZFC",
+            task_hint="reasoning",
+            adaptive_depth=True,
+            max_depth=8,
+        )
+    )
+    # Shallow depth (8 layers) on hard task fails quality target (< 0.75)
+    assert res_shallow.trace.actual_depth <= 8
+    assert res_shallow.trace.correct is False
+
+    aeon_adaptive = AEON(policy="voi", adaptive_depth=True)
+    res_adaptive = aeon_adaptive.run(
+        InferenceRequest(
+            query="Analyze the consistency of Zermelo-Fraenkel set theory without the Axiom of Choice and discuss Godel's second incompleteness theorem.",
+            ground_truth="Consistent relative to ZFC",
+            task_hint="reasoning",
+            adaptive_depth=True,
+        )
+    )
+    # Adaptive depth allocates sufficient depth to satisfy quality target
+    assert res_adaptive.trace.actual_depth >= 20
+    assert res_adaptive.trace.correct is True
+
+
+def test_mod_dynamicity_token_ranking():
+    """Audit Test 2: Prove that token importance order strictly dictates MoD depth allocation."""
+    router = MoDRouter()
+    t_a = TokenComputeState(token_id=0, token_text="A", importance=0.95)
+    t_b = TokenComputeState(token_id=1, token_text="B", importance=0.20)
+    t_c = TokenComputeState(token_id=2, token_text="C", importance=0.60)
+
+    res = router.route_token_depths([t_a, t_b, t_c], total_layers=80, min_depth=8, max_depth=80, capacity_ratio=0.65)
+    assert res[0].allocated_layers > res[2].allocated_layers > res[1].allocated_layers
+
+    # Reverse order: B high, A low
+    t_a2 = TokenComputeState(token_id=0, token_text="A", importance=0.15)
+    t_b2 = TokenComputeState(token_id=1, token_text="B", importance=0.95)
+    t_c2 = TokenComputeState(token_id=2, token_text="C", importance=0.60)
+    res2 = router.route_token_depths([t_a2, t_b2, t_c2], total_layers=80, min_depth=8, max_depth=80, capacity_ratio=0.65)
+    assert res2[1].allocated_layers > res2[2].allocated_layers > res2[0].allocated_layers
+
+
+def test_ablation_depth_config_propagation():
+    """Audit Test 3: Prove that disabling MoD or early exit in DepthConfig genuinely modifies execution."""
+    cfg_no_exit = DepthConfig(early_exit_enabled=False)
+    assert cfg_no_exit.enable_early_exit is False
+
+    cfg_no_mod = DepthConfig(mod_enabled=False)
+    assert cfg_no_mod.enable_mod is False
+
+    cfg_no_cap = DepthConfig(adaptive_capacity=False)
+    assert cfg_no_cap.enable_adaptive_capacity is False
+
+    cfg_uniform = DepthConfig(uniform_importance=True)
+    assert cfg_uniform.enable_token_importance is False
+
+    # When both early exit and MoD are disabled, execution MUST run at full depth
+    cfg_full = DepthConfig(early_exit_enabled=False, mod_enabled=False)
+    ctrl_full = DepthController(config=cfg_full)
+    _, st_full, _ = ctrl_full.execute_depth_inference(
+        query="Hi", model_name="aeon-medium-7b", difficulty=0.35, uncertainty=0.24
+    )
+    assert st_full.actual_depth == 32
+    assert st_full.early_exit is False
+
+
+def test_break_even_formulas_across_tokens():
+    """Audit Test 4: Prove break-even net latency and FLOP savings across token lengths."""
+    from aeon.depth.cost_model import DepthCostModel
+    cm = DepthCostModel()
+    prof = get_model_depth_profile("aeon-medium-7b")
+
+    for tok in [4, 8, 16, 32]:
+        full_lat = cm.calculate_layer_latency_ms("aeon-medium-7b", prof.total_layers, prof.total_layers, tok)
+        half_lat = cm.calculate_layer_latency_ms("aeon-medium-7b", prof.total_layers, prof.total_layers // 2, tok)
+        saved_lat = full_lat - half_lat
+        # Net savings must be positive and exceed controller overhead (0.2ms)
+        assert saved_lat > 0.20
+
+        full_flops = cm.calculate_layer_flops("aeon-medium-7b", prof.total_layers, prof.total_layers, tok)
+        half_flops = cm.calculate_layer_flops("aeon-medium-7b", prof.total_layers, prof.total_layers // 2, tok)
+        assert full_flops > half_flops
+
+
+def test_full_depth_fallback_after_insufficient_quality():
+    """Audit Test 5: Verify safe full-depth fallback when early exit quality is insufficient."""
+    evaluator = EarlyExitEvaluator()
+    prof = get_model_depth_profile("aeon-large-70b")
+
+    # At layer 16, quality is 0.78 but target is 0.95
+    res = evaluator.evaluate_exit(
+        current_layer=16,
+        profile=prof,
+        current_quality=0.78,
+        current_confidence=0.75,
+        target_quality=0.95,
+        marginal_quality_gain=0.17,
+        marginal_cost_usd=0.0001,
+    )
+    assert res.should_exit is False
+    assert res.decision == DepthExitDecision.CONTINUE
