@@ -5,25 +5,63 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "aeon"
 version = "0.1.0"
-description = "AEON — Adaptive Economically-Optimized Network for Maximum-Efficiency AI Inference"
+description = "AEON — Adaptive Economically-Optimized Network for Maximum-Efficiency AI Inference Orchestration"
 readme = "README.md"
 requires-python = ">=3.9"
+authors = [
+    { name = "AEON Contributors" }
+]
+keywords = [
+    "ai",
+    "inference",
+    "orchestration",
+    "adaptive-compute",
+    "speculative-decoding",
+    "quantization",
+    "hardware-aware",
+    "openai-compatible",
+    "openapi"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: System :: Distributed Computing",
+]
 dependencies = [
     "pydantic>=2.0",
     "click>=8.0",
     "numpy>=1.20",
+    "fastapi>=0.100",
+    "uvicorn>=0.20",
+    "starlette>=0.27",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
+    "pytest-asyncio>=0.20",
+    "httpx>=0.24",
+]
+torch = [
+    "torch>=2.0",
+]
+models = [
+    "torch>=2.0",
+    "transformers>=4.30",
 ]
 full = [
     "torch>=2.0",
     "transformers>=4.30",
-    "fastapi>=0.100",
-    "uvicorn>=0.20",
+    "scipy>=1.10",
     "httpx>=0.24",
+    "pytest>=7.0",
+    "pytest-asyncio>=0.20",
 ]
 
 [tool.setuptools.packages.find]
@@ -36,3 +74,4 @@ aeon = "aeon.cli.main:cli"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+asyncio_mode = "strict"

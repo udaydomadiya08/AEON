@@ -16,13 +16,13 @@ Phase 1 of AEON has been designed, implemented, unit-tested, and benchmarked aga
 
 ```text
 Existing project:
-- Clean workspace at `/Users/uday/Documents/uday_projects/most effecient ai`.
-- Hardware: Apple Silicon (arm64, macOS 15.4), 8 CPU cores, 8 GB unified memory.
+- Clean repository root workspace.
+- Hardware: Apple Silicon (arm64, macOS), 8 CPU cores, 8 GB unified memory.
 - Accelerators: PyTorch 2.8.0 with Metal Performance Shaders (MPS) active; CUDA unavailable.
-- Environment: Python 3.9.18, uv, transformers 4.57.6, pydantic 2.12.5, fastapi 0.128.8, numpy 2.0.2, scipy 1.13.1, pytest 8.4.2.
+- Environment: Python 3.9.18, transformers 4.57.6, pydantic 2.12.5, fastapi 0.128.8, numpy 2.0.2, scipy 1.13.1, pytest 8.4.2.
 
 Reusable code & assets:
-- Primary research specification extracted from `/Users/uday/Downloads/AEON_Maximum_Efficiency_AI_Architecture_Report.docx` into local repository.
+- Primary research specification extracted from reference architecture specification into local repository (`AEON_RESEARCH_SPEC.txt`).
 - Standard libraries for typed schemas (`pydantic`), high-performance scientific modeling (`numpy`, `scipy`), and testing (`pytest`).
 
 Missing components (before Phase 1):

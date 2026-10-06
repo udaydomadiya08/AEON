@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use or reference AEON in your research or software, please cite it using the metadata below."
+title: "AEON: Adaptive Economically-Optimized Network for AI Inference Orchestration"
+abstract: "An adaptive compute orchestration layer that dynamically routes inference across available models, deterministic tools, multi-level memory, reasoning strategies, execution depth, precision, and hardware accelerators."
+version: 0.1.0
+date-released: 2026-10-06
+license: Apache-2.0
+repository-code: "https://github.com/your-org/aeon"
+authors:
+  - name: "AEON Contributors"
+keywords:
+  - "adaptive compute"
+  - "inference orchestration"
+  - "speculative decoding"
+  - "mixture of depths"
+  - "quantization"
+  - "hardware-aware"
+  - "llm"
