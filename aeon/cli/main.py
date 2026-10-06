@@ -7,6 +7,7 @@ Supports:
   aeon profile
 """
 
+import sys
 import json
 import click
 from aeon import AEON
@@ -1060,6 +1061,88 @@ def hardware_overhead():
     click.echo("\nMeasuring Phase 8 Hardware Controller Latency Overhead...\n")
     ov = harness.run_hardware_controller_overhead(iterations=100)
     click.echo(json.dumps(ov, indent=2))
+
+
+
+# =========================================================================
+# Phase 10 Server & Orchestration Commands
+# =========================================================================
+
+@cli.command(name="serve")
+@click.option("--host", default="127.0.0.1", help="Host interface to bind")
+@click.option("--port", default=8000, type=int, help="Port to listen on")
+@click.option("--api-key", default=None, help="Optional API key for client authentication")
+@click.option("--config", default=None, help="Path to JSON configuration file")
+@click.option("--workers", default=1, type=int, help="Number of worker processes")
+def serve(host, port, api_key, config, workers):
+    """Start local AEON OpenAPI inference orchestration server."""
+    import uvicorn
+    from aeon.server.config import ServerConfig
+    from aeon.server.app import create_app
+
+    server_cfg = ServerConfig.from_env(
+        config_file=config,
+        host=host,
+        port=port,
+        api_key=api_key,
+        workers=workers
+    )
+    app = create_app(server_cfg)
+    uvicorn.run(app, host=server_cfg.host, port=server_cfg.port, workers=server_cfg.workers, log_level=server_cfg.log_level.lower())
+
+
+@cli.group()
+def server():
+    """AEON server management commands."""
+    pass
+
+
+@server.command(name="health")
+@click.option("--url", default="http://127.0.0.1:8000", help="AEON server base URL")
+def server_health(url):
+    """Check running AEON server health and component readiness."""
+    import urllib.request
+    import json
+    target = f"{url.rstrip('/')}/health/ready"
+    try:
+        req = urllib.request.Request(target, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            status_code = response.getcode()
+            body = json.loads(response.read().decode("utf-8"))
+            if status_code == 200:
+                click.echo(f"\nAEON Server: {body.get('status', 'OK').upper()}")
+                for comp, details in body.get("components", {}).items():
+                    st = details.get("status", "unknown")
+                    click.echo(f"  - {comp:<15}: {st}")
+                click.echo()
+                return
+    except Exception as e:
+        click.echo(f"\nAEON Server Health Check FAILED: {e}\n", err=True)
+        sys.exit(1)
+
+
+@server.command(name="status")
+@click.option("--url", default="http://127.0.0.1:8000", help="AEON server base URL")
+@click.option("--api-key", default=None, help="Admin API key if authentication is enabled")
+def server_status(url, api_key):
+    """Query AEON server runtime status and memory headroom."""
+    import urllib.request
+    import json
+    target = f"{url.rstrip('/')}/admin/status"
+    headers = {"Accept": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    try:
+        req = urllib.request.Request(target, headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as response:
+            body = json.loads(response.read().decode("utf-8"))
+            click.echo("\n==================== AEON SERVER STATUS ====================")
+            for k, v in body.items():
+                click.echo(f"{k:<25}: {v}")
+            click.echo("============================================================\n")
+    except Exception as e:
+        click.echo(f"\nFailed to query AEON server status: {e}\n", err=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,1337 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "AEON Adaptive Inference Orchestration API",
+    "description": "Local-first, provider-agnostic adaptive compute orchestration service. Dynamically routes tasks across models, tools, memory, reasoning, speculation, execution depth, precision, and hardware accelerators.",
+    "version": "0.10.0"
+  },
+  "paths": {
+    "/v1/chat/completions": {
+      "post": {
+        "tags": [
+          "Chat Completions"
+        ],
+        "summary": "Create chat completion",
+        "description": "Generate responses through AEON's adaptive compute orchestration engine.",
+        "operationId": "create_chat_completion_v1_chat_completions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatCompletionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatCompletionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/models": {
+      "get": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "List available models",
+        "description": "Lists available AEON orchestrator models and local model profiles.",
+        "operationId": "list_models_v1_models_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/models/{model_id}": {
+      "get": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Retrieve a model",
+        "description": "Retrieve capability metadata for a specific model profile.",
+        "operationId": "get_model_v1_models__model_id__get",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelObject"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "Health & Diagnostics"
+        ],
+        "summary": "Health overview",
+        "description": "Check comprehensive component readiness and system status.",
+        "operationId": "get_health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/live": {
+      "get": {
+        "tags": [
+          "Health & Diagnostics"
+        ],
+        "summary": "Liveness probe",
+        "description": "Returns 200 OK if the application server process is running.",
+        "operationId": "get_liveness_health_live_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "tags": [
+          "Health & Diagnostics"
+        ],
+        "summary": "Readiness probe",
+        "description": "Returns 200 OK only when the orchestrator engine is ready to service inference.",
+        "operationId": "get_readiness_health_ready_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/version": {
+      "get": {
+        "tags": [
+          "Health & Diagnostics"
+        ],
+        "summary": "Version metadata",
+        "description": "Export software versions, git commit, and execution environment.",
+        "operationId": "get_version_version_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": [
+          "Observability"
+        ],
+        "summary": "Export telemetry metrics",
+        "description": "Returns analytical metrics in Prometheus text exposition or JSON format.",
+        "operationId": "get_metrics_metrics_get",
+        "parameters": [
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Format"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/config": {
+      "get": {
+        "tags": [
+          "Administration"
+        ],
+        "summary": "Inspect server configuration",
+        "description": "Retrieve running server configuration with sensitive keys and secrets redacted.",
+        "operationId": "get_admin_config_admin_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Admin Config Admin Config Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/status": {
+      "get": {
+        "tags": [
+          "Administration"
+        ],
+        "summary": "Inspect runtime status",
+        "description": "Retrieve current active concurrency, queue backlog, and hardware status.",
+        "operationId": "get_admin_status_admin_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Admin Status Admin Status Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/reload": {
+      "post": {
+        "tags": [
+          "Administration"
+        ],
+        "summary": "Reload server state",
+        "description": "Clear cache and re-evaluate hardware telemetry without restarting process.",
+        "operationId": "reload_admin_admin_reload_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Reload Admin Admin Reload Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dashboard/": {
+      "get": {
+        "tags": [
+          "Dashboard"
+        ],
+        "summary": "Dashboard UI",
+        "description": "Serve the static single-page dashboard application.",
+        "operationId": "get_dashboard_html_dashboard__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dashboard": {
+      "get": {
+        "tags": [
+          "Dashboard"
+        ],
+        "summary": "Dashboard UI",
+        "description": "Serve the static single-page dashboard application.",
+        "operationId": "get_dashboard_html_dashboard_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dashboard/api/summary": {
+      "get": {
+        "tags": [
+          "Dashboard"
+        ],
+        "summary": "Dashboard metrics summary",
+        "description": "Export aggregated operational, routing, and economic metrics for dashboard rendering.",
+        "operationId": "get_dashboard_summary_dashboard_api_summary_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dashboard/api/recent": {
+      "get": {
+        "tags": [
+          "Dashboard"
+        ],
+        "summary": "Recent request records",
+        "description": "Retrieve recent sanitized request metadata.",
+        "operationId": "get_recent_requests_dashboard_api_recent_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 25,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Get Recent Requests Dashboard Api Recent Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AeonPolicyOverride": {
+        "properties": {
+          "quality_target": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality Target",
+            "description": "Minimum acceptable quality threshold (0.0 to 1.0)"
+          },
+          "latency_sla_ms": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Sla Ms",
+            "description": "Strict SLA latency limit in milliseconds"
+          },
+          "cost_budget_usd": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Budget Usd",
+            "description": "Maximum allowed monetary cost in USD"
+          },
+          "memory_budget_mb": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Budget Mb",
+            "description": "Maximum allowable memory footprint in MB"
+          },
+          "energy_budget_joules": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Energy Budget Joules",
+            "description": "Maximum allowable energy consumption in Joules"
+          },
+          "preferred_device": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferred Device",
+            "description": "Preferred hardware accelerator (e.g. cpu, mps, cuda)"
+          },
+          "preferred_precision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferred Precision",
+            "description": "Preferred numerical precision (e.g. fp32, fp16, fp8, int8)"
+          },
+          "preferred_quantization": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferred Quantization",
+            "description": "Preferred quantization method (e.g. none, int8, int4)"
+          },
+          "memory": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory",
+            "description": "Toggle Phase 3 multi-tier memory hierarchy"
+          },
+          "tools": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tools",
+            "description": "Toggle Phase 4 deterministic tool routing"
+          },
+          "speculation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Speculation",
+            "description": "Toggle Phase 5 speculative decoding"
+          },
+          "reasoning": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning",
+            "description": "Toggle Phase 6 adaptive reasoning controller"
+          },
+          "adaptive_depth": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adaptive Depth",
+            "description": "Toggle Phase 7 adaptive depth early exit"
+          },
+          "hardware_aware": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hardware Aware",
+            "description": "Toggle Phase 8 hardware-aware execution"
+          }
+        },
+        "type": "object",
+        "title": "AeonPolicyOverride",
+        "description": "Namespaced per-request optimization constraints and overrides."
+      },
+      "AeonTelemetryMetadata": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "selected_model": {
+            "type": "string",
+            "title": "Selected Model"
+          },
+          "selected_device": {
+            "type": "string",
+            "title": "Selected Device"
+          },
+          "selected_precision": {
+            "type": "string",
+            "title": "Selected Precision"
+          },
+          "selected_depth": {
+            "type": "integer",
+            "title": "Selected Depth"
+          },
+          "selected_strategy": {
+            "type": "string",
+            "title": "Selected Strategy"
+          },
+          "cache_hit": {
+            "type": "boolean",
+            "title": "Cache Hit"
+          },
+          "tool_used": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Used"
+          },
+          "reasoning_strategy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning Strategy"
+          },
+          "speculation_used": {
+            "type": "boolean",
+            "title": "Speculation Used",
+            "default": false
+          },
+          "quality_estimate": {
+            "type": "number",
+            "title": "Quality Estimate"
+          },
+          "latency_ms": {
+            "type": "number",
+            "title": "Latency Ms"
+          },
+          "estimated_cost_usd": {
+            "type": "number",
+            "title": "Estimated Cost Usd"
+          },
+          "estimated_energy_joules": {
+            "type": "number",
+            "title": "Estimated Energy Joules"
+          },
+          "controller_overhead_ms": {
+            "type": "number",
+            "title": "Controller Overhead Ms"
+          },
+          "provenance": {
+            "type": "string",
+            "title": "Provenance",
+            "default": "HYBRID"
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id",
+          "selected_model",
+          "selected_device",
+          "selected_precision",
+          "selected_depth",
+          "selected_strategy",
+          "cache_hit",
+          "quality_estimate",
+          "latency_ms",
+          "estimated_cost_usd",
+          "estimated_energy_joules",
+          "controller_overhead_ms"
+        ],
+        "title": "AeonTelemetryMetadata",
+        "description": "Non-intrusive metadata exposed via x_aeon without violating OpenAI schema compatibility."
+      },
+      "ChatChoice": {
+        "properties": {
+          "index": {
+            "type": "integer",
+            "title": "Index",
+            "default": 0
+          },
+          "message": {
+            "$ref": "#/components/schemas/ChatChoiceMessage"
+          },
+          "finish_reason": {
+            "type": "string",
+            "title": "Finish Reason",
+            "default": "stop"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "title": "ChatChoice",
+        "description": "Individual completion choice."
+      },
+      "ChatChoiceMessage": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "title": "Role",
+            "default": "assistant"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "title": "ChatChoiceMessage",
+        "description": "Output message generated by the model."
+      },
+      "ChatCompletionRequest": {
+        "properties": {
+          "model": {
+            "type": "string",
+            "title": "Model",
+            "description": "Model identifier (e.g. 'aeon-auto', 'aeon-small', 'aeon-medium')",
+            "default": "aeon-auto"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/ChatMessage"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Messages",
+            "description": "List of messages comprising the conversation so far"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 2.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature",
+            "description": "Sampling temperature",
+            "default": 0.0
+          },
+          "top_p": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top P",
+            "description": "Nucleus sampling probability",
+            "default": 1.0
+          },
+          "n": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N",
+            "description": "Number of completions (currently 1 supported)",
+            "default": 1
+          },
+          "stream": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stream",
+            "description": "Whether to stream response chunks via Server-Sent Events",
+            "default": false
+          },
+          "max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 8192.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Tokens",
+            "description": "Maximum tokens to generate",
+            "default": 256
+          },
+          "presence_penalty": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 2.0,
+                "minimum": -2.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Presence Penalty",
+            "default": 0.0
+          },
+          "frequency_penalty": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 2.0,
+                "minimum": -2.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frequency Penalty",
+            "default": 0.0
+          },
+          "user": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User",
+            "description": "A unique identifier representing your end-user"
+          },
+          "extra_body": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExtraBody"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional extra body for AEON configuration"
+          }
+        },
+        "type": "object",
+        "required": [
+          "messages"
+        ],
+        "title": "ChatCompletionRequest",
+        "description": "OpenAI-compatible chat completion request schema."
+      },
+      "ChatCompletionResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "object": {
+            "type": "string",
+            "title": "Object",
+            "default": "chat.completion"
+          },
+          "created": {
+            "type": "integer",
+            "title": "Created"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "choices": {
+            "items": {
+              "$ref": "#/components/schemas/ChatChoice"
+            },
+            "type": "array",
+            "title": "Choices"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/UsageInfo"
+          },
+          "x_aeon": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AeonTelemetryMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "model",
+          "choices",
+          "usage"
+        ],
+        "title": "ChatCompletionResponse",
+        "description": "Standard OpenAI-compatible Chat Completion response."
+      },
+      "ChatMessage": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "system",
+              "user",
+              "assistant",
+              "tool",
+              "function"
+            ],
+            "title": "Role",
+            "description": "Role of the message author"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "The message contents"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name",
+            "description": "Optional author participant name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "role",
+          "content"
+        ],
+        "title": "ChatMessage",
+        "description": "Standard conversational message."
+      },
+      "ComponentHealth": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "available"
+        ],
+        "title": "ComponentHealth"
+      },
+      "DashboardSummary": {
+        "properties": {
+          "system": {
+            "$ref": "#/components/schemas/SystemInfo"
+          },
+          "metrics": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metrics"
+          },
+          "provenance": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Provenance"
+          }
+        },
+        "type": "object",
+        "required": [
+          "system",
+          "metrics",
+          "provenance"
+        ],
+        "title": "DashboardSummary"
+      },
+      "ExtraBody": {
+        "properties": {
+          "aeon": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AeonPolicyOverride"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "AEON-specific orchestration controls"
+          }
+        },
+        "type": "object",
+        "title": "ExtraBody",
+        "description": "Holder for optional namespaced extensions."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "timestamp": {
+            "type": "string",
+            "title": "Timestamp"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "default": "0.10.0"
+          },
+          "components": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ComponentHealth"
+            },
+            "type": "object",
+            "title": "Components"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "timestamp",
+          "components"
+        ],
+        "title": "HealthResponse"
+      },
+      "ModelListResponse": {
+        "properties": {
+          "object": {
+            "type": "string",
+            "title": "Object",
+            "default": "list"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ModelObject"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ModelListResponse"
+      },
+      "ModelObject": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "object": {
+            "type": "string",
+            "title": "Object",
+            "default": "model"
+          },
+          "created": {
+            "type": "integer",
+            "title": "Created"
+          },
+          "owned_by": {
+            "type": "string",
+            "title": "Owned By",
+            "default": "aeon"
+          },
+          "capabilities": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capabilities"
+          },
+          "x_aeon_metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X Aeon Metadata"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "ModelObject"
+      },
+      "SystemInfo": {
+        "properties": {
+          "cpu": {
+            "type": "string",
+            "title": "Cpu"
+          },
+          "ram_gb": {
+            "type": "number",
+            "title": "Ram Gb"
+          },
+          "device": {
+            "type": "string",
+            "title": "Device"
+          },
+          "mps_available": {
+            "type": "boolean",
+            "title": "Mps Available"
+          },
+          "cuda_available": {
+            "type": "boolean",
+            "title": "Cuda Available"
+          },
+          "python_version": {
+            "type": "string",
+            "title": "Python Version"
+          },
+          "aeon_version": {
+            "type": "string",
+            "title": "Aeon Version"
+          },
+          "uptime_seconds": {
+            "type": "number",
+            "title": "Uptime Seconds"
+          }
+        },
+        "type": "object",
+        "required": [
+          "cpu",
+          "ram_gb",
+          "device",
+          "mps_available",
+          "cuda_available",
+          "python_version",
+          "aeon_version",
+          "uptime_seconds"
+        ],
+        "title": "SystemInfo"
+      },
+      "UsageInfo": {
+        "properties": {
+          "prompt_tokens": {
+            "type": "integer",
+            "title": "Prompt Tokens",
+            "default": 0
+          },
+          "completion_tokens": {
+            "type": "integer",
+            "title": "Completion Tokens",
+            "default": 0
+          },
+          "total_tokens": {
+            "type": "integer",
+            "title": "Total Tokens",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "UsageInfo",
+        "description": "Token accounting breakdown."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "VersionResponse": {
+        "properties": {
+          "aeon_version": {
+            "type": "string",
+            "title": "Aeon Version",
+            "default": "0.10.0"
+          },
+          "api_version": {
+            "type": "string",
+            "title": "Api Version",
+            "default": "v1"
+          },
+          "git_commit": {
+            "type": "string",
+            "title": "Git Commit"
+          },
+          "python_version": {
+            "type": "string",
+            "title": "Python Version"
+          },
+          "timestamp": {
+            "type": "string",
+            "title": "Timestamp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "git_commit",
+          "python_version",
+          "timestamp"
+        ],
+        "title": "VersionResponse"
+      }
+    }
+  }
+}

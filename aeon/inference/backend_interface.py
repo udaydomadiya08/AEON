@@ -60,3 +60,22 @@ class BaseInferenceBackend(ABC):
     def verify_speculation(self, target_model: str, prefix: str, draft_tokens: list) -> Dict[str, Any]:
         """Verify draft tokens against target model logits/distribution."""
         return {"accepted_tokens": draft_tokens, "rejected_tokens": []}
+
+    def stream(self, request: InferenceRequest, plan: ExecutionPlan):
+        """Stream token chunks for the request."""
+        res = self.generate(request, plan)
+        words = res["answer"].split(" ")
+        for i, word in enumerate(words):
+            yield word if i == 0 else " " + word
+
+    def health(self) -> Dict[str, Any]:
+        """Return backend health and availability metadata."""
+        return {"status": "healthy", "available": True}
+
+    def metadata(self) -> Dict[str, Any]:
+        """Return backend architectural and engine metadata."""
+        return {"type": self.__class__.__name__, "streaming_supported": True}
+
+    def estimate_cost(self, prompt_tokens: int, completion_tokens: int, model: Optional[str] = None) -> float:
+        """Estimate monetary cost in USD for a given token volume."""
+        return (prompt_tokens + completion_tokens) * 1e-6

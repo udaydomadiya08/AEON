@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AEON — Adaptive Orchestration Dashboard</title>
+  <link rel="stylesheet" href="/dashboard/static/style.css">
+</head>
+<body>
+  <header>
+    <div class="logo-group">
+      <h1>AEON ORCHESTRATION CONSOLE</h1>
+      <p>Local-First Adaptive Inference &amp; Economic Telemetry</p>
+    </div>
+    <div class="header-controls">
+      <div class="badge">
+        <span class="pulse"></span>
+        <span id="sys-status">OPERATIONAL</span>
+      </div>
+      <label for="refresh-rate" style="font-size: 13px; color: var(--text-secondary);">Refresh:</label>
+      <select id="refresh-rate">
+        <option value="0">Off</option>
+        <option value="1000">1s</option>
+        <option value="5000" selected>5s</option>
+        <option value="10000">10s</option>
+        <option value="30000">30s</option>
+      </select>
+    </div>
+  </header>
+
+  <!-- System Info Row -->
+  <div class="grid">
+    <div class="card">
+      <div class="card-title">
+        <span>Hardware Engine</span>
+        <span class="provenance-tag">MEASURED</span>
+      </div>
+      <div class="card-value" id="sys-device">MPS / CPU</div>
+      <div class="card-subtext" id="sys-arch">Darwin arm</div>
+    </div>
+    <div class="card">
+      <div class="card-title">
+        <span>Total Requests</span>
+        <span class="provenance-tag">MEASURED</span>
+      </div>
+      <div class="card-value" id="req-total">0</div>
+      <div class="card-subtext" id="req-sub">Success: 0 | Failed: 0</div>
+    </div>
+    <div class="card">
+      <div class="card-title">
+        <span>Latency (p50 / p95)</span>
+        <span class="provenance-tag">HYBRID</span>
+      </div>
+      <div class="card-value" id="lat-val">0.0 ms</div>
+      <div class="card-subtext" id="lat-sub">Overhead: 0.0 ms</div>
+    </div>
+    <div class="card">
+      <div class="card-title">
+        <span>Economic Efficiency</span>
+        <span class="provenance-tag">ESTIMATED</span>
+      </div>
+      <div class="card-value" id="econ-qpd">0.0 Q/$</div>
+      <div class="card-subtext" id="econ-cost">Avg Cost: $0.000000</div>
+    </div>
+  </div>
+
+  <!-- Decisions & Routing Grid -->
+  <div class="grid">
+    <div class="card">
+      <div class="card-title">
+        <span>Execution Depth</span>
+        <span class="provenance-tag">DERIVED</span>
+      </div>
+      <div class="card-value" id="depth-val">32.0 L</div>
+      <div class="bar-container">
+        <div class="bar-bg"><div class="bar-fill" id="depth-bar" style="width: 100%;"></div></div>
+        <span id="depth-pct" style="font-size: 11px; color: var(--text-secondary);">100%</span>
+      </div>
+      <div class="card-subtext" id="depth-sub" style="margin-top: 8px;">Early Exits: 0</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">
+        <span>Cache Hit Rate</span>
+        <span class="provenance-tag">MEASURED</span>
+      </div>
+      <div class="card-value" id="cache-rate">0.0%</div>
+      <div class="bar-container">
+        <div class="bar-bg"><div class="bar-fill" id="cache-bar" style="width: 0%;"></div></div>
+      </div>
+      <div class="card-subtext" id="cache-sub" style="margin-top: 8px;">Hits: 0</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">
+        <span>Speculation Rate</span>
+        <span class="provenance-tag">DERIVED</span>
+      </div>
+      <div class="card-value" id="spec-rate">0.0%</div>
+      <div class="bar-container">
+        <div class="bar-bg"><div class="bar-fill" id="spec-bar" style="width: 0%;"></div></div>
+      </div>
+      <div class="card-subtext" id="spec-sub" style="margin-top: 8px;">Speculative Rounds: 0</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">
+        <span>Tools Dispatched</span>
+        <span class="provenance-tag">MEASURED</span>
+      </div>
+      <div class="card-value" id="tools-total">0</div>
+      <div class="card-subtext" id="tools-sub">Arithmetic, Unit, Code</div>
+    </div>
+  </div>
+
+  <!-- Recent Activity Table -->
+  <div class="table-card">
+    <div class="card-title" style="margin-bottom: 16px;">
+      <span>Recent Requests Telemetry (Privacy Redacted)</span>
+      <span class="provenance-tag">MEASURED</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Request ID</th>
+          <th>Model</th>
+          <th>Device</th>
+          <th>Precision</th>
+          <th>Depth</th>
+          <th>Latency</th>
+          <th>Cost</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="recent-table-body">
+        <tr>
+          <td colspan="9" style="text-align: center; color: var(--text-muted); padding: 24px;">No requests recorded yet.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <footer style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border-color); font-size: 11px; color: var(--text-muted); display: flex; justify-content: space-between;">
+    <span>AEON v0.10.0 • Local-First Adaptive Orchestration</span>
+    <span>PROVENANCE NOTICE: Model latency and CUDA accelerators reflect calibrated simulations on non-CUDA hosts.</span>
+  </footer>
+
+  <script src="/dashboard/static/dashboard.js"></script>
+</body>
+</html>
