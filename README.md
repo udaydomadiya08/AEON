@@ -322,7 +322,6 @@ aeon benchmark validate
 1. **Hardware Validation Scope**: Physical GPU execution is currently validated on Apple Silicon MPS and host CPU. Datacenter hardware profiles (NVIDIA A100 SXM4 80GB, NVIDIA H100 SXM5 80GB) are analytical simulation baselines.
 2. **Default Simulation Backend**: AEON ships with calibrated analytical kernels to ensure reproducible, zero-cost experimentation without requiring gigabytes of model downloads. Adapters for local runtimes (`llama.cpp`, `vLLM`) can be plugged into the `ModelBackend` interface.
 3. **Local-Scale Concurrency**: Load testing has been evaluated up to 8 concurrent in-flight streams on desktop hardware; multi-node cluster load has not been measured.
-4. **License Selection**: The repository is prepared for open-source publication; formal licensing is pending final project confirmation.
 
 ---
 
@@ -383,6 +382,14 @@ For security vulnerability disclosure, please review our [Security Policy](SECUR
 
 ---
 
+## License
+
+License: Apache-2.0
+
+AEON is licensed under the Apache License, Version 2.0. See the [LICENSE](LICENSE) file for details.
+
+---
+
 ## Citation
 
 If you use or reference AEON in your research or engineering projects, please cite:
@@ -396,3 +403,4 @@ If you use or reference AEON in your research or engineering projects, please ci
   version = {0.1.0}
 }
 ```
+

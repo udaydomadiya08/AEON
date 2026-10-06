@@ -105,4 +105,3 @@ The validated benchmark results in v0.1.0 were executed under the following cano
 1. **Analytical Datacenter Profiles**: NVIDIA A100 SXM4 and H100 SXM5 execution profiles are calibrated analytical simulations.
 2. **Simulation Backend**: By default, AEON uses simulated neural execution to avoid requiring massive model weights to be downloaded. External runtimes (`llama.cpp`, `vLLM`) can be integrated via the `BaseInferenceBackend` interface.
 3. **Answer Quality**: The benchmark did not demonstrate superior answer quality for Full AEON versus fixed large model baselines. AEON optimizes compute, latency, and cost efficiency, not foundational model intelligence.
-4. **License Selection**: Licensing terms are prepared for open-source publication and pending formal confirmation.
