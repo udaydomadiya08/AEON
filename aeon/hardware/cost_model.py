@@ -100,8 +100,8 @@ class HardwareCostModel:
         cloud_token_rate = (params_b * 0.035) / 1000000.0  # Cost per token
         if device in [DeviceType.MPS, DeviceType.CPU]:
             # Local on-premise execution has zero API cloud markups
-            # Cost reflects local electricity consumption + hardware depreciation
-            local_depreciation = tokens_count * (params_b * 0.002) / 1000000.0
+            # Cost reflects local electricity consumption + hardware compute depreciation scaling with precision & depth
+            local_depreciation = tokens_count * (params_b * 0.002) / 1000000.0 * prec_factor * layer_ratio
             cost_usd = local_depreciation + (latency_ms / 1000.0 * 35.0 * self.cost_per_joule_usd)
         else:
             cost_usd = (tokens_count * cloud_token_rate * prec_factor * layer_ratio)

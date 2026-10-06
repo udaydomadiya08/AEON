@@ -127,9 +127,10 @@ class HardwareDetector:
         updated = profile.model_copy(deep=True)
         updated.ram_available_mb = round(avail_ram_mb, 1)
         updated.memory_pressure = self._calculate_memory_pressure(avail_ram_mb, profile.ram_total_mb)
-        thermal = self._read_thermal_state(profile.os_name)
-        updated.thermal_pressure = thermal.pressure
-        updated.thermal_temperature_c = thermal.temperature_c
+        if profile.thermal_pressure == ThermalPressure.NOMINAL and not profile.is_simulated:
+            thermal = self._read_thermal_state(profile.os_name)
+            updated.thermal_pressure = thermal.pressure
+            updated.thermal_temperature_c = thermal.temperature_c
         return updated
 
     def _detect_cpu_model(self, os_name: str, machine_arch: str) -> str:

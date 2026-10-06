@@ -1589,12 +1589,42 @@ class BenchmarkHarness:
                 res = aeon_inst.run(req)
                 traces.append(res.trace)
 
+            from collections import Counter
+            devs = [t.hardware_device for t in traces if getattr(t, "hardware_device", None)]
+            precs = [t.precision_selected for t in traces if getattr(t, "precision_selected", None)]
+            quants = [t.quantization_selected for t in traces if getattr(t, "quantization_selected", None)]
+            models = [t.model for t in traces if getattr(t, "model", None)]
+            depths = [getattr(t, "depth_executed", None) or getattr(t, "actual_depth", None) for t in traces if (getattr(t, "depth_executed", None) or getattr(t, "actual_depth", None))]
+            mem_mbs = [t.memory_estimated_mb for t in traces if getattr(t, "memory_estimated_mb", None)]
+            energies = [t.energy_joules for t in traces if getattr(t, "energy_joules", None)]
+            utils = [t.hardware_utility for t in traces if getattr(t, "hardware_utility", None)]
+
+            sel_dev = Counter(devs).most_common(1)[0][0] if devs else "cpu"
+            sel_prec = Counter(precs).most_common(1)[0][0] if precs else "FP32"
+            sel_quant = Counter(quants).most_common(1)[0][0] if quants else "none"
+            sel_model = Counter(models).most_common(1)[0][0] if models else "aeon-medium-7b"
+            mean_depth = float(sum(depths)/len(depths)) if depths else 32.0
+            mean_mem = float(sum(mem_mbs)/len(mem_mbs)) if mem_mbs else 0.0
+            mean_energy = float(sum(energies)/len(energies)) if energies else 0.0
+            mean_util = float(sum(utils)/len(utils)) if utils else 0.0
+
             agg = calculate_aggregate_metrics(name, traces)
             results[name] = {
+                "condition": name,
+                "selected_device": sel_dev,
+                "selected_precision": sel_prec,
+                "quantization": sel_quant,
+                "model": sel_model,
+                "depth": round(mean_depth, 1),
                 "quality": agg.accuracy,
                 "mean_latency_ms": agg.mean_latency_ms,
+                "total_flops": agg.total_compute_flops,
+                "memory_mb": round(mean_mem, 1),
+                "energy_joules": round(mean_energy, 4),
                 "mean_cost_usd": agg.total_cost_usd / max(1, len(traces)),
+                "utility": round(mean_util, 4),
                 "quality_per_dollar": agg.quality_per_dollar,
+                "provenance": "SIMULATED/ESTIMATED",
                 "total_tokens": agg.total_tokens,
             }
         return results

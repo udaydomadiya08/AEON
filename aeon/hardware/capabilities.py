@@ -28,6 +28,16 @@ class HardwareCapabilityMatrix:
     def set_profile(self, profile: HardwareProfile) -> None:
         self.profile = profile
 
+    def check_support(
+        self,
+        device: DeviceType,
+        precision: PrecisionType,
+        model_name: str = "aeon-medium-7b",
+    ) -> CapabilityStatus:
+        """Convenience method returning CapabilityStatus for device and precision."""
+        status, _ = self.evaluate_compatibility(device, model_name, precision)
+        return status
+
     def evaluate_compatibility(
         self,
         device: DeviceType,

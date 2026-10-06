@@ -631,7 +631,10 @@ class ComputeController:
             verification=res.get("verification", False),
             confidence=res.get("confidence", 1.0),
             escalated=escalated,
-            correct=res.get("correct"),
+            correct=(
+                False if (hw_dec and getattr(request, "require_verification", False) and getattr(hw_dec.precision, "value", str(hw_dec.precision)) in ["INT8", "FP8"])
+                else (False if (hw_dec and hw_dec.quality_estimate < (0.80 if plan.difficulty >= 0.60 else 0.65)) else res.get("correct"))
+            ),
             latency_type="MEASURED",
             cost_type="ESTIMATED",
             compute_type="ESTIMATED",

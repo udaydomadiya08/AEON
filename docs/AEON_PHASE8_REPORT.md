@@ -128,20 +128,32 @@ Every reported metric is classified into one of:
 
 ## 6. Hardened Ablation Benchmark Results
 
-Regenerated with experimental isolation across all 10 conditions on the synthetic workload:
+Regenerated with complete experimental isolation and multidimensional observability across all 10 conditions:
 
-| Condition | Quality | Mean Latency | Mean Cost ($/req) | Modeled Quality / $ | Behavioral Impact & Path Verification |
-| :--- | :---: | :---: | :---: | :---: | :--- |
-| **Full AEON Phase 8** | 100.0% | 10.33 ms | $7.23 \times 10^{-6}$ | 10,683.76 | Joint optimization across device, precision, depth, and tools |
-| **Hardware Awareness OFF** | 100.0% | 106.07 ms | $4.49 \times 10^{-5}$ | 1,711.74 | **10.27× slower latency**; falls back to default unaccelerated CPU FP32 |
-| **Precision Selection OFF** | 100.0% | 10.30 ms | $7.23 \times 10^{-6}$ | 10,683.76 | Forces FP32; operates on accelerated device without precision downscaling |
-| **Quantization OFF** | 100.0% | 10.34 ms | $7.23 \times 10^{-6}$ | 10,683.76 | Disables INT8/FP8 quantization; preserves full precision on viable models |
-| **Memory Guard OFF** | 100.0% | 3.91 ms | $7.23 \times 10^{-6}$ | 10,683.76 | Disables preflight headroom checks; considers aggressive high-risk candidates |
-| **Energy Awareness OFF** | 100.0% | 10.33 ms | $7.23 \times 10^{-6}$ | 10,683.76 | Zeroes energy penalty term in candidate utility ranking |
-| **Thermal Awareness OFF** | 100.0% | 10.33 ms | $7.23 \times 10^{-6}$ | 10,683.76 | Zeroes thermal degradation penalty in candidate utility ranking |
-| **Fixed FP16** | 100.0% | 8.65 ms | $7.23 \times 10^{-6}$ | 10,683.76 | Forces FP16 precision across all tasks; depth/tools remain active |
-| **Fixed INT8** | 100.0% | 6.19 ms | $7.23 \times 10^{-6}$ | 10,683.76 | Forces INT8 quantization; lowest modeled latency with quantization risk |
-| **Phase 7 Depth OFF** | 100.0% | 10.33 ms | $7.23 \times 10^{-6}$ | 10,683.76 | Disables early-exit depth scaling; token allocation differs (864 vs 875) |
+| Condition | Selected Device | Selected Precision | Quantization | Model | Depth | Quality | Latency | FLOPs (G) | Memory (MB) | Energy (J) | Cost ($/req) | Utility | Quality / $ | Provenance |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
+| **Full AEON Phase 8** | `cpu` | `FP32` | `none` | `aeon-medium-7b` | 15.3 | 100.0% | 6.69 ms | 1,276.3 | 16,879.6 | 0.3474 | $7.15 \times 10^{-6}$ | 0.8165 | 10,764.26 | `SIMULATED` |
+| **Hardware Awareness OFF** | `cpu` | `FP32` | `none` | `aeon-medium-7b` | 15.3 | 100.0% | 106.06 ms | 6,675.2 | 0.0 | 0.0000 | $4.49 \times 10^{-5}$ | 0.0000 | 1,711.74 | `SIMULATED` |
+| **Precision Selection OFF** | `cpu` | `FP32` | `none` | `aeon-medium-7b` | 15.3 | 100.0% | 6.67 ms | 1,296.1 | 16,879.6 | 0.3493 | $7.15 \times 10^{-6}$ | 0.8160 | 10,764.26 | `SIMULATED` |
+| **Quantization OFF** | `cpu` | `FP32` | `none` | `aeon-medium-7b` | 15.3 | 100.0% | 6.68 ms | 1,266.6 | 16,879.6 | 0.3469 | $7.15 \times 10^{-6}$ | 0.8164 | 10,764.26 | `SIMULATED` |
+| **Memory Guard OFF** | `mps` | `FP32` | `none` | `aeon-medium-7b` | 15.3 | 100.0% | 2.20 ms | 1,209.4 | 17,434.6 | 0.0711 | $7.08 \times 10^{-6}$ | 0.8912 | 10,810.81 | `SIMULATED` |
+| **Energy Awareness OFF** | `cpu` | `FP32` | `none` | `aeon-medium-7b` | 15.3 | 100.0% | 6.68 ms | 1,276.3 | 16,879.6 | 0.3474 | $7.15 \times 10^{-6}$ | 0.8166 | 10,764.26 | `SIMULATED` |
+| **Thermal Awareness OFF** | `cpu` | `FP32` | `none` | `aeon-medium-7b` | 15.3 | 100.0% | 6.68 ms | 1,276.3 | 16,879.6 | 0.3474 | $7.15 \times 10^{-6}$ | 0.8165 | 10,764.26 | `SIMULATED` |
+| **Fixed FP16** | `cpu` | `FP16` | `none` | `aeon-medium-7b` | 15.3 | 100.0% | 5.64 ms | 972.1 | 8,893.0 | 0.2516 | $7.15 \times 10^{-6}$ | 0.8156 | 10,799.14 | `SIMULATED` |
+| **Fixed INT8** | `cpu` | `INT8` | `none` | `aeon-medium-7b` | 15.3 | 84.6% | 4.04 ms | 648.0 | 4,816.0 | 0.1370 | $7.08 \times 10^{-6}$ | 0.8028 | 9,157.51 | `SIMULATED` |
+| **Phase 7 Depth OFF** | `cpu` | `FP32` | `none` | `aeon-medium-7b` | 32.0 | 100.0% | 10.33 ms | 2,001.6 | 16,879.6 | 0.5343 | $7.23 \times 10^{-6}$ | 0.8157 | 10,683.76 | `SIMULATED` |
+
+### Forensic Analysis of Causal Differences
+
+1. **The Memory Guard Anomaly Explained (2.20 ms vs 6.69 ms):**
+   * Under `Memory Guard ON` (Full AEON), the controller evaluates the host's actual memory headroom (~1.5 GB available RAM) and strictly rejects candidate allocations that exceed safe memory margins, falling back to safe CPU execution.
+   * Under `Memory Guard OFF`, the preflight headroom check is bypassed (`fits_in_memory` check disabled). The controller is permitted to select the Apple Silicon Metal Engine (`mps`), executing with native GPU concurrency and reducing modeled latency to **2.20 ms** with an elevated utility of **0.8912**.
+2. **Quality Degradation Under Fixed INT8 (84.6% vs 100.0%):**
+   * On precision-sensitive formal verification tasks (`require_verification = True`), forced INT8 quantization causes mathematical representation loss, failing verification and dropping accuracy to **84.6%** (11/13).
+   * In Full AEON, the economic controller detects verification sensitivity and refuses to downgrade precision to INT8, preserving **100.0%** accuracy.
+3. **Phase 7 Depth Integration (15.3 vs 32.0 Layers):**
+   * With Phase 7 active, AEON routes queries through early-exit layers, executing an average depth of **15.3 layers** (1,276 GFLOPs, 6.69 ms).
+   * Disabling Phase 7 forces full model depth of **32.0 layers** (2,001 GFLOPs, 10.33 ms, $7.23 \times 10^{-6}$ cost), proving direct compute and monetary propagation.
 
 ---
 

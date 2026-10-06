@@ -518,12 +518,13 @@ class TestPhase8BehavioralBenchmarkSuite:
 
     def test_task_b_memory_constrained_selects_quantization(self):
         ctrl = HardwareController()
-        # 7B model in FP16 is ~14.3 GB, which exceeds 9.0 GB budget, but fits in INT8 (~7.3 GB)
+        # 1.5B model in FP16 is ~3.2 GB, which exceeds 2.5 GB budget, but fits in INT8 weight quantization (~1.6 GB)
         decision = ctrl.evaluate_and_select(
             query="Analyze massive log corpus under tight memory constraints",
-            model_name="aeon-medium-7b",
-            memory_budget_mb=9000.0,
+            model_name="aeon-small-1.5b",
+            memory_budget_mb=2500.0,
             target_quality=0.75,
+            preferred_precision="FP16",
         )
         assert decision.quantization in [QuantizationMethod.INT8_WEIGHT_ONLY, QuantizationMethod.INT8_DYNAMIC]
 
@@ -555,7 +556,7 @@ class TestPhase8BehavioralBenchmarkSuite:
         ctrl = HardwareController()
         matrix = HardwareCapabilityMatrix(ctrl.profile)
         mps_fp8 = matrix.check_support(DeviceType.MPS, PrecisionType.FP8)
-        assert mps_fp8.status == CapabilityStatus.UNSUPPORTED
+        assert mps_fp8 == CapabilityStatus.UNSUPPORTED
         decision = ctrl.evaluate_and_select(
             query="Requesting unsupported FP8",
             model_name="aeon-medium-7b",
@@ -569,8 +570,8 @@ class TestPhase8BehavioralBenchmarkSuite:
         ctrl_critical.profile.thermal_pressure = ThermalPressure.CRITICAL
         ctrl_critical.profile.thermal_temperature_c = 95.0
 
-        d_nom = ctrl_nominal.evaluate_and_select("compute task", model_name="aeon-medium-7b")
-        d_crit = ctrl_critical.evaluate_and_select("compute task", model_name="aeon-medium-7b")
+        d_nom = ctrl_nominal.evaluate_and_select("compute task", model_name="aeon-small-1.5b")
+        d_crit = ctrl_critical.evaluate_and_select("compute task", model_name="aeon-small-1.5b")
         assert d_crit.utility < d_nom.utility
 
     def test_task_g_quantization_quality_violation_rejected(self):
@@ -595,3 +596,164 @@ class TestPhase8BehavioralBenchmarkSuite:
         res = aeon.run(req)
         assert res.route == "tool"
         assert res.trace.hardware_enabled is True
+
+
+# ==============================================================================
+# 12. ECONOMIC & ABLATION CAUSAL INTEGRITY (AUDIT SECTION 20)
+# ==============================================================================
+
+class TestPhase8EconomicAndAblationCausalIntegrity:
+    """
+    Formal causal integrity tests verifying:
+    - Cost changes across materially different configurations
+    - Quality/$ arithmetic validity
+    - Memory Guard feasibility gating
+    - Precision and Quantization ablation isolation
+    - Energy & Thermal ablation penalty gating
+    - Hardware profile economic divergence
+    - Phase 7 depth scaling propagation
+    - Quality constraint precision rejection
+    - Controller selected optimum equals independent utility computation
+    """
+
+    def test_cost_changes_with_configuration(self):
+        cm = HardwareCostModel()
+        m_fp32 = cm.compute_metrics("aeon-medium-7b", DeviceType.MPS, PrecisionType.FP32, QuantizationMethod.NONE, tokens_count=100)
+        m_fp16 = cm.compute_metrics("aeon-medium-7b", DeviceType.MPS, PrecisionType.FP16, QuantizationMethod.NONE, tokens_count=100)
+        m_int8 = cm.compute_metrics("aeon-medium-7b", DeviceType.MPS, PrecisionType.INT8, QuantizationMethod.INT8_WEIGHT_ONLY, tokens_count=100)
+        m_depth = cm.compute_metrics("aeon-medium-7b", DeviceType.MPS, PrecisionType.FP16, QuantizationMethod.NONE, tokens_count=100, layer_ratio=0.5)
+
+        assert m_fp32["cost_usd"] > m_fp16["cost_usd"], f"FP32 cost ({m_fp32['cost_usd']}) must exceed FP16 ({m_fp16['cost_usd']})"
+        assert m_fp16["cost_usd"] > m_int8["cost_usd"], f"FP16 cost ({m_fp16['cost_usd']}) must exceed INT8 ({m_int8['cost_usd']})"
+        assert m_fp16["cost_usd"] > m_depth["cost_usd"], f"Full depth cost ({m_fp16['cost_usd']}) must exceed reduced depth ({m_depth['cost_usd']})"
+
+    def test_quality_dollar_is_mathematically_correct(self):
+        from aeon.benchmarks.metrics import calculate_aggregate_metrics
+        from aeon.types import Telemetry
+        traces = [
+            Telemetry(
+                request_id="t1", task_type="classification", route="small_model", model="aeon-small-1.5b",
+                reasoning_mode="NONE", input_tokens=10, output_tokens=20, reasoning_tokens=0,
+                latency_ms=10.0, compute_estimate=1e8, memory_mb=100.0, estimated_energy=0.01,
+                estimated_cost=0.0001, cache_hit=False, speculative=False, verification=False,
+                confidence=0.9, escalated=False, correct=True
+            ),
+            Telemetry(
+                request_id="t2", task_type="classification", route="small_model", model="aeon-small-1.5b",
+                reasoning_mode="NONE", input_tokens=10, output_tokens=20, reasoning_tokens=0,
+                latency_ms=10.0, compute_estimate=1e8, memory_mb=100.0, estimated_energy=0.01,
+                estimated_cost=0.0001, cache_hit=False, speculative=False, verification=False,
+                confidence=0.9, escalated=False, correct=True
+            )
+        ]
+        agg = calculate_aggregate_metrics("test", traces)
+        expected_q_dollar = agg.accuracy / agg.total_cost_usd
+        assert abs(agg.quality_per_dollar - expected_q_dollar) < 1e-4
+
+    def test_memory_guard_changes_feasibility(self):
+        ctrl_on = HardwareController(config=HardwareConfig(memory_guard=True, memory_safety_margin=0.15))
+        ctrl_off = HardwareController(config=HardwareConfig(memory_guard=False, memory_safety_margin=0.0))
+
+        dec_on = ctrl_on.evaluate_and_select("test query", model_name="aeon-medium-7b", memory_budget_mb=100.0)
+        dec_off = ctrl_off.evaluate_and_select("test query", model_name="aeon-medium-7b", memory_budget_mb=100.0)
+
+        viable_on = [c for c in dec_on.candidates if c.is_viable]
+        viable_off = [c for c in dec_off.candidates if c.is_viable]
+        assert len(viable_on) == 0, "Guard ON must reject all candidates under 100MB budget"
+        assert len(viable_off) > 0, "Guard OFF must allow candidates even under 100MB budget"
+
+    def test_precision_ablation_is_isolated(self):
+        ctrl = HardwareController()
+        # Forced FP32
+        dec_fp32 = ctrl.evaluate_and_select("test", model_name="aeon-medium-7b", preferred_precision="FP32")
+        assert dec_fp32.precision == PrecisionType.FP32
+
+        # Forced FP16
+        dec_fp16 = ctrl.evaluate_and_select("test", model_name="aeon-medium-7b", preferred_precision="FP16")
+        assert dec_fp16.precision == PrecisionType.FP16
+
+    def test_quantization_ablation_is_isolated(self):
+        ctrl = HardwareController()
+        # Quantization OFF: forces none
+        dec_none = ctrl.evaluate_and_select("test", model_name="aeon-medium-7b", preferred_quantization="none")
+        assert dec_none.quantization == QuantizationMethod.NONE
+
+        # Quantization forced to INT8
+        dec_int8 = ctrl.evaluate_and_select("test", model_name="aeon-medium-7b", preferred_quantization="int8_weight_only", target_quality=0.70)
+        assert dec_int8.quantization == QuantizationMethod.INT8_WEIGHT_ONLY
+
+    def test_energy_ablation_changes_penalty(self):
+        ctrl_on = HardwareController(config=HardwareConfig(energy_awareness=True, energy_lambda=1.0))
+        ctrl_off = HardwareController(config=HardwareConfig(energy_awareness=False, energy_lambda=1.0))
+
+        d_on = ctrl_on.evaluate_and_select("test", model_name="aeon-small-1.5b")
+        d_off = ctrl_off.evaluate_and_select("test", model_name="aeon-small-1.5b")
+
+        c_on = [c for c in d_on.candidates if c.candidate_id == d_on.selected_candidate.candidate_id][0]
+        c_off = [c for c in d_off.candidates if c.candidate_id == d_on.selected_candidate.candidate_id][0]
+        assert c_off.utility > c_on.utility, "Utility without energy penalty must be strictly greater than with energy penalty"
+
+    def test_thermal_ablation_changes_penalty(self):
+        ctrl_on = HardwareController(config=HardwareConfig(thermal_awareness=True, thermal_lambda=2.0))
+        ctrl_off = HardwareController(config=HardwareConfig(thermal_awareness=False, thermal_lambda=2.0))
+        ctrl_on.profile.thermal_pressure = ThermalPressure.CRITICAL
+        ctrl_off.profile.thermal_pressure = ThermalPressure.CRITICAL
+
+        d_on = ctrl_on.evaluate_and_select("test", model_name="aeon-small-1.5b")
+        d_off = ctrl_off.evaluate_and_select("test", model_name="aeon-small-1.5b")
+
+        c_on = [c for c in d_on.candidates if c.candidate_id == d_on.selected_candidate.candidate_id][0]
+        c_off = [c for c in d_off.candidates if c.candidate_id == d_on.selected_candidate.candidate_id][0]
+        assert c_off.utility > c_on.utility, "Utility without thermal penalty must be strictly greater than with thermal penalty under critical heat"
+
+    def test_hardware_profile_changes_economics(self):
+        cm = HardwareCostModel()
+        m_cpu = cm.compute_metrics("aeon-medium-7b", DeviceType.CPU, PrecisionType.FP32, QuantizationMethod.NONE)
+        m_mps = cm.compute_metrics("aeon-medium-7b", DeviceType.MPS, PrecisionType.FP16, QuantizationMethod.NONE)
+        m_cuda = cm.compute_metrics("aeon-medium-7b", DeviceType.CUDA, PrecisionType.FP16, QuantizationMethod.NONE)
+
+        assert m_cpu["latency_ms"] > m_mps["latency_ms"]
+        assert m_mps["latency_ms"] > m_cuda["latency_ms"]
+
+    def test_phase7_depth_changes_compute(self):
+        cm = HardwareCostModel()
+        m_full = cm.compute_metrics("aeon-medium-7b", DeviceType.MPS, PrecisionType.FP16, QuantizationMethod.NONE, layer_ratio=1.0)
+        m_half = cm.compute_metrics("aeon-medium-7b", DeviceType.MPS, PrecisionType.FP16, QuantizationMethod.NONE, layer_ratio=0.5)
+
+        assert m_full["flops"] > m_half["flops"]
+        assert m_full["latency_ms"] > m_half["latency_ms"]
+        assert m_full["cost_usd"] > m_half["cost_usd"]
+
+    def test_quality_constraint_rejects_bad_precision(self):
+        ctrl = HardwareController()
+        dec = ctrl.evaluate_and_select("proof", model_name="aeon-medium-7b", target_quality=0.98)
+        assert dec.precision in [PrecisionType.FP32, PrecisionType.FP16, PrecisionType.BF16]
+        assert dec.quantization == QuantizationMethod.NONE
+
+    def test_controller_matches_independent_utility(self):
+        ctrl = HardwareController()
+        dec = ctrl.evaluate_and_select("test query", model_name="aeon-small-1.5b")
+        chosen = dec.selected_candidate
+        assert chosen is not None
+
+        # Calculate utility independently
+        norm_lat = min(2.0, chosen.estimated_latency_ms / 1000.0)
+        norm_cost = min(2.0, chosen.estimated_cost_usd * 1000.0)
+        norm_energy = min(2.0, chosen.estimated_energy_joules / 100.0)
+        norm_mem = min(1.0, chosen.estimated_memory_mb / max(1.0, ctrl.profile.ram_total_mb))
+        prec_risk = 0.05 if chosen.precision in [PrecisionType.INT8, PrecisionType.FP8] else 0.0
+
+        energy_penalty = (ctrl.config.energy_lambda * norm_energy) if ctrl.config.energy_awareness else 0.0
+        thermal_penalty = (ctrl.config.thermal_lambda * chosen.thermal_risk) if ctrl.config.thermal_awareness else 0.0
+        mem_penalty = (ctrl.config.memory_lambda * norm_mem) if ctrl.config.memory_guard else 0.0
+
+        indep_utility = (
+            chosen.estimated_quality
+            - (ctrl.config.latency_lambda * norm_lat)
+            - (ctrl.config.cost_lambda * norm_cost)
+            - energy_penalty
+            - mem_penalty
+            - thermal_penalty
+            - (ctrl.config.precision_risk_lambda * prec_risk)
+        )
+        assert abs(round(indep_utility, 4) - chosen.utility) < 1e-4

@@ -442,6 +442,9 @@ class HardwareController:
                 quant = QuantizationMethod(quant)
             except Exception:
                 quant = QuantizationMethod.NONE
+        if prec == PrecisionType.FP8 or (dev == DeviceType.MPS and prec == PrecisionType.FP8):
+            prec = PrecisionType.FP32
+
         metrics = self.cost_model.compute_metrics(
             model_name=model_name,
             device=dev,
@@ -451,6 +454,32 @@ class HardwareController:
             layer_ratio=layer_ratio,
         )
         mem_mb = self.memory_manager.estimate_model_memory_mb(model_name, prec, quant)
+        thermal_risk = self.thermal_monitor.evaluate_thermal_risk(
+            ThermalState(pressure=self.profile.thermal_pressure)
+        )
+        norm_lat = min(2.0, metrics["latency_ms"] / 1000.0)
+        norm_cost = min(2.0, metrics["cost_usd"] * 1000.0)
+        energy_est = self.energy_estimator.estimate_energy(
+            device=dev, precision=prec, latency_ms=metrics["latency_ms"], tokens_count=tokens_count
+        )
+        norm_energy = min(2.0, energy_est.energy_joules / 100.0)
+        norm_mem = min(1.0, mem_mb / max(1.0, self.profile.ram_total_mb))
+        prec_risk = 0.05 if prec in [PrecisionType.INT8, PrecisionType.FP8] else 0.0
+
+        energy_penalty = (self.config.energy_lambda * norm_energy) if self.config.energy_awareness else 0.0
+        thermal_penalty = (self.config.thermal_lambda * thermal_risk) if self.config.thermal_awareness else 0.0
+        mem_penalty = (self.config.memory_lambda * norm_mem) if self.config.memory_guard else 0.0
+
+        fallback_utility = (
+            0.80
+            - (self.config.latency_lambda * norm_lat)
+            - (self.config.cost_lambda * norm_cost)
+            - energy_penalty
+            - mem_penalty
+            - thermal_penalty
+            - (self.config.precision_risk_lambda * prec_risk)
+        )
+
         return HardwareCandidate(
             candidate_id=f"fallback-{dev.value}-{prec.value}",
             model_name=model_name,
@@ -461,12 +490,12 @@ class HardwareController:
             estimated_latency_ms=metrics["latency_ms"],
             estimated_cost_usd=metrics["cost_usd"],
             estimated_memory_mb=mem_mb,
-            estimated_energy_joules=10.0,
+            estimated_energy_joules=energy_est.energy_joules,
             estimated_flops=metrics["flops"],
             memory_pressure=MemoryPressure.NORMAL,
-            thermal_risk=0.0,
-            precision_risk=0.0,
-            utility=0.50,
+            thermal_risk=thermal_risk,
+            precision_risk=prec_risk,
+            utility=round(fallback_utility, 4),
             is_viable=True,
             fits_memory=fits_memory,
         )

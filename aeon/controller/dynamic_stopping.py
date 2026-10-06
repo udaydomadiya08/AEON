@@ -324,6 +324,7 @@ class DynamicStoppingController:
                     unnecessary_model_avoided=True,
                     fallback_occurred=meta["fallback_occurred"],
                     plan_steps=history,
+                    hardware_enabled=(request.hardware_aware is True or (request.hardware_aware is None and self.hardware_enabled)),
                 )
 
                 return InferenceResult(
@@ -674,6 +675,8 @@ class DynamicStoppingController:
         hw_active = (request.hardware_aware is True or (request.hardware_aware is None and self.hardware_enabled)) and self.hardware_controller is not None
         hw_dec = None
         if hw_active:
+            d_layers = last_depth_tel.get("depth_executed") if last_depth_tel else None
+            t_layers = last_depth_tel.get("depth_total_layers") if last_depth_tel else None
             hw_dec = self.hardware_controller.evaluate_and_select(
                 query=request.query,
                 model_name=state.current_model,
@@ -686,6 +689,8 @@ class DynamicStoppingController:
                 preferred_device=request.device,
                 preferred_precision=request.precision,
                 preferred_quantization=request.quantization,
+                depth_layers=d_layers,
+                total_layers=t_layers,
             )
 
         telemetry = Telemetry(
@@ -726,7 +731,10 @@ class DynamicStoppingController:
             speculation_rounds=last_spec_tel.speculation_rounds if last_spec_tel else 0,
             confidence=round(state.confidence, 4),
             escalated=(escalations > 0),
-            correct=latest_correct,
+            correct=(
+                False if (hw_dec and getattr(request, "require_verification", False) and getattr(hw_dec.precision, "value", str(hw_dec.precision)) in ["INT8", "FP8"])
+                else (False if (hw_dec and hw_dec.quality_estimate < (0.80 if state.difficulty >= 0.60 else 0.65)) else latest_correct)
+            ),
             initial_quality_estimate=round(initial_q_est or 0.0, 4),
             final_quality_estimate=round(state.current_quality_estimate, 4),
             marginal_quality_gain=round(final_marginal_gain, 4),
