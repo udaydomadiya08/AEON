@@ -317,7 +317,8 @@ def memory_benchmark():
     click.echo()
 
 
-@cli.command()
+@cli.group(invoke_without_command=True)
+@click.pass_context
 @click.option("--phase", type=click.Choice(["1", "2", "3", "4", "5"]), default="2", help="Benchmark phase (1, 2, 3, 4, or 5)")
 @click.option("--ablation", is_flag=True, help="Run Phase 2 VOI systematic ablation study")
 @click.option("--memory-ablation", is_flag=True, help="Run Phase 3 memory tier ablation study")
@@ -333,8 +334,11 @@ def memory_benchmark():
 @click.option("--freshness", is_flag=True, help="Run Section 28 freshness experiment")
 @click.option("--memory-pressure", is_flag=True, help="Run Section 29 memory pressure experiment")
 @click.option("--voi", is_flag=True, help="Run Phase 2 VOI evaluation")
-def benchmark(phase: str, ablation: bool, memory_ablation: bool, tool_ablation: bool, tool_vs_model: bool, tool_failure: bool, budget_study: bool, speculation_ablation: bool, speculation_break_even: bool, speculation_workload: bool, target_exp: bool, semantic_safety: bool, freshness: bool, memory_pressure: bool, voi: bool):
+def benchmark(ctx, phase: str, ablation: bool, memory_ablation: bool, tool_ablation: bool, tool_vs_model: bool, tool_failure: bool, budget_study: bool, speculation_ablation: bool, speculation_break_even: bool, speculation_workload: bool, target_exp: bool, semantic_safety: bool, freshness: bool, memory_pressure: bool, voi: bool):
     """Run comparative benchmark suite and ablations."""
+    if ctx.invoked_subcommand is not None:
+        return
+
     harness = BenchmarkHarness()
 
     if speculation_ablation:
@@ -552,6 +556,31 @@ def benchmark(phase: str, ablation: bool, memory_ablation: bool, tool_ablation: 
         )
     click.echo("=" * 115)
     click.echo()
+
+
+from aeon.benchmarks.cli import (
+    benchmark_list,
+    benchmark_run,
+    benchmark_compare,
+    benchmark_ablation,
+    benchmark_sensitivity,
+    benchmark_pareto,
+    benchmark_reproducibility,
+    benchmark_validate,
+    benchmark_report,
+    benchmark_export
+)
+
+benchmark.add_command(benchmark_list, "list")
+benchmark.add_command(benchmark_run, "run")
+benchmark.add_command(benchmark_compare, "compare")
+benchmark.add_command(benchmark_ablation, "ablation")
+benchmark.add_command(benchmark_sensitivity, "sensitivity")
+benchmark.add_command(benchmark_pareto, "pareto")
+benchmark.add_command(benchmark_reproducibility, "reproducibility")
+benchmark.add_command(benchmark_validate, "validate")
+benchmark.add_command(benchmark_report, "report")
+benchmark.add_command(benchmark_export, "export")
 
 
 # =========================================================================
