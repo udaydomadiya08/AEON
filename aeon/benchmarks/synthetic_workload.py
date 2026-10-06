@@ -463,3 +463,80 @@ def generate_phase6_reasoning_workload() -> Dict[str, List[InferenceRequest]]:
     }
 
 
+def generate_phase7_depth_workload() -> Dict[str, List[InferenceRequest]]:
+    """
+    AEON Phase 7 — Adaptive Model Depth & Mixture-of-Depths Workload Suite.
+    Categorizes tasks across 12 distinct computational depth & routing modalities:
+    1. trivial (Immediate early exit, min layers)
+    2. easy factual (Shallow layers, quick exit)
+    3. arithmetic (Deterministic tool check, early exit if tool handled)
+    4. medium reasoning (Moderate layers, selective token depth)
+    5. hard reasoning (Deep layers, high token capacity)
+    6. proof/logic (Max depth, strict verification gate)
+    7. code (Algorithmic syntax, moderate-to-deep allocation)
+    8. long-context (Token-selective MoD allocation, budget preservation)
+    9. repetitive (Sparse MoD computation, high layer skipping)
+    10. uncertainty-heavy (Depth scaling to resolve entropy)
+    11. verification-heavy (High confidence required before exit)
+    12. mixed workloads (Multi-modal depth optimization)
+    """
+    return {
+        "trivial": [
+            InferenceRequest(query="Hi, how are you?", ground_truth="Hello", task_hint="classification", adaptive_depth=True),
+            InferenceRequest(query="Say yes.", ground_truth="yes", task_hint="factual", adaptive_depth=True),
+            InferenceRequest(query="Echo 'pong'", ground_truth="pong", task_hint="extraction", adaptive_depth=True),
+        ],
+        "easy_factual": [
+            InferenceRequest(query="What is the capital of France?", ground_truth="Paris", task_hint="factual", adaptive_depth=True),
+            InferenceRequest(query="What element has atomic number 1?", ground_truth="Hydrogen", task_hint="factual", adaptive_depth=True),
+            InferenceRequest(query="What year did Apollo 11 land on the Moon?", ground_truth="1969", task_hint="factual", adaptive_depth=True),
+        ],
+        "arithmetic": [
+            InferenceRequest(query="Calculate: 125 * 37", ground_truth="4625", task_hint="arithmetic", tools=True, adaptive_depth=True),
+            InferenceRequest(query="What is 4096 / 16 + 25?", ground_truth="281", task_hint="arithmetic", tools=True, adaptive_depth=True),
+            InferenceRequest(query="Compute 17^3", ground_truth="4913", task_hint="arithmetic", tools=True, adaptive_depth=True),
+        ],
+        "medium_reasoning": [
+            InferenceRequest(query="If John has 3 apples and gives 1 to Mary, then buys 5 more and gives half of all his apples away, how many does he have?", ground_truth="3.5 or 3", task_hint="reasoning", adaptive_depth=True),
+            InferenceRequest(query="A train departs at 2:15 PM and arrives at 4:45 PM. What was the journey duration in hours?", ground_truth="2.5 hours", task_hint="reasoning", adaptive_depth=True),
+            InferenceRequest(query="Determine if the sentence 'Every cat loves some fish' logically implies 'Some fish is loved by every cat'.", ground_truth="No, quantifier scope", task_hint="reasoning", adaptive_depth=True),
+        ],
+        "hard_reasoning": [
+            InferenceRequest(query="Analyze the consistency of Zermelo-Fraenkel set theory without the Axiom of Choice and discuss Godel's second incompleteness theorem.", ground_truth="Consistent relative to ZFC", task_hint="reasoning", adaptive_depth=True),
+            InferenceRequest(query="Solve: In a village of 100 people, every person who learns a secret tells two new people every hour. How long until all know it?", ground_truth="7 hours", task_hint="reasoning", adaptive_depth=True),
+            InferenceRequest(query="Explain why quantum entanglement cannot be used for superluminal communication according to the no-communication theorem.", ground_truth="Reduced density matrix invariant", task_hint="reasoning", adaptive_depth=True),
+        ],
+        "proof_logic": [
+            InferenceRequest(query="Prove that the square root of 2 is irrational using proof by contradiction.", ground_truth="Irrational", task_hint="reasoning", require_verification=True, adaptive_depth=True),
+            InferenceRequest(query="Construct a formal truth table proof showing that (P -> Q) is equivalent to (~P v Q).", ground_truth="Equivalent", task_hint="reasoning", require_verification=True, adaptive_depth=True),
+            InferenceRequest(query="Prove that every connected graph with V vertices and V-1 edges is a tree.", ground_truth="Tree theorem", task_hint="reasoning", require_verification=True, adaptive_depth=True),
+        ],
+        "code": [
+            InferenceRequest(query="Implement a binary search tree insertion method in Python with balancing.", ground_truth="BST insertion", task_hint="code", adaptive_depth=True),
+            InferenceRequest(query="Write a thread-safe singleton pattern in Python using double-checked locking.", ground_truth="Singleton", task_hint="code", adaptive_depth=True),
+            InferenceRequest(query="Write an asynchronous token bucket rate limiter in Python with asyncio.", ground_truth="Rate limiter", task_hint="code", adaptive_depth=True),
+        ],
+        "long_context": [
+            InferenceRequest(query="Given the following 500-word corporate policy manual, extract the section covering remote travel reimbursement: " + "Corporate policy paragraph details. " * 30, ground_truth="Travel reimbursement", task_hint="extraction", adaptive_depth=True),
+            InferenceRequest(query="Summarize the key architectural patterns discussed across these design documents: " + "Microservices event driven patterns. " * 25, ground_truth="Summary", task_hint="extraction", adaptive_depth=True),
+        ],
+        "repetitive": [
+            InferenceRequest(query="Echo the format: ID: <val>, Status: OK for items 1 through 10 consecutively.", ground_truth="Items 1 to 10", task_hint="extraction", adaptive_depth=True),
+            InferenceRequest(query="Repeat the word 'VERIFIED' 15 times separated by commas.", ground_truth="VERIFIED, ...", task_hint="factual", adaptive_depth=True),
+        ],
+        "uncertainty_heavy": [
+            InferenceRequest(query="What is the probability of a catastrophic geomagnetic storm hitting Earth in the next 10 years based on solar cycle 25 models?", ground_truth="Probabilistic range", task_hint="reasoning", adaptive_depth=True),
+            InferenceRequest(query="Evaluate whether cold fusion could be physically viable under non-equilibrium lattice conditions.", ground_truth="Uncertain/speculative", task_hint="reasoning", adaptive_depth=True),
+        ],
+        "verification_heavy": [
+            InferenceRequest(query="Verify deterministically if 104729 is a prime number and prove its primality.", ground_truth="104729 is prime", task_hint="reasoning", require_verification=True, tools=True, adaptive_depth=True),
+            InferenceRequest(query="Check whether the matrix [[1, 2], [3, 4]] is invertible and compute its exact determinant.", ground_truth="det = -2, invertible", task_hint="symbolic_math", require_verification=True, tools=True, adaptive_depth=True),
+        ],
+        "mixed": [
+            InferenceRequest(query="Calculate 45 * 19 and then explain the prime factors of the resulting product.", ground_truth="855 = 3^2 * 5 * 19", task_hint="arithmetic", tools=True, adaptive_depth=True),
+            InferenceRequest(query="Classify sentiment of: 'Buggy update ruined my morning' and write a 2-line Python unit test to reproduce it.", ground_truth="negative + code", task_hint="code", adaptive_depth=True),
+        ],
+    }
+
+
+

@@ -52,6 +52,8 @@ class DynamicStoppingController:
         speculation_enabled: bool = False,
         reasoning_controller: Optional[Any] = None,
         reasoning_enabled: bool = False,
+        depth_controller: Optional[Any] = None,
+        depth_enabled: bool = False,
     ):
         self.registry = registry or global_registry
         self.backend = backend or SimulationBackend(self.registry)
@@ -65,10 +67,13 @@ class DynamicStoppingController:
         self.speculation_enabled = speculation_enabled
         self.reasoning_controller = reasoning_controller
         self.reasoning_enabled = reasoning_enabled
+        self.depth_controller = depth_controller
+        self.depth_enabled = depth_enabled
 
     def run(self, request: InferenceRequest) -> InferenceResult:
         request_id = f"aeon-{uuid.uuid4().hex[:10]}"
         last_reason_tel: Optional[Dict[str, Any]] = None
+        last_depth_tel: Optional[Dict[str, Any]] = None
         
         # 1. Initial task classification & difficulty analysis
         task_type, difficulty, level, uncertainty = self.classifier.classify(request.query)
@@ -404,8 +409,26 @@ class DynamicStoppingController:
                 verification=False,
             )
 
-            # Execute model inference step (with speculative decoding if enabled)
+            # Execute model inference step (with speculative decoding and/or adaptive depth)
             spec_enabled = request.speculation is True or (request.speculation is None and self.speculation_enabled)
+            depth_enabled = (request.adaptive_depth is True or (request.adaptive_depth is None and self.depth_enabled)) and self.depth_controller is not None
+
+            if depth_enabled:
+                from aeon.depth.types import DepthStrategy
+                pref_strat = DepthStrategy(request.depth_strategy) if request.depth_strategy else None
+                depth_ans, depth_state, depth_tel = self.depth_controller.execute_depth_inference(
+                    query=request.query,
+                    context=request.context,
+                    model_name=plan.model,
+                    difficulty=state.difficulty,
+                    uncertainty=state.uncertainty,
+                    target_confidence=budget_cfg.target_quality,
+                    cost_budget_usd=state.remaining_cost_budget,
+                    latency_budget_ms=state.remaining_latency_ms,
+                    preferred_strategy=pref_strat,
+                )
+                last_depth_tel = depth_tel
+
             if spec_enabled and self.speculation_controller is not None and plan.route != RouteChoice.DECISION_MODEL:
                 from aeon.speculation.types import SpeculationStrategy
                 preferred_strat = SpeculationStrategy(request.speculation_strategy) if request.speculation_strategy else None
@@ -431,6 +454,22 @@ class DynamicStoppingController:
                     "estimated_cost": spec_tel.estimated_cost,
                     "speculative": spec_st.current_strategy != SpeculationStrategy.STANDARD,
                     "verification": True,
+                    "correct": True,
+                }
+            elif depth_enabled:
+                res = {
+                    "answer": depth_ans,
+                    "input_tokens": max(1, int(len(request.query) / 4.0)),
+                    "output_tokens": max(5, int(len(depth_ans) / 4.0)),
+                    "reasoning_tokens": 0,
+                    "latency_ms": depth_state.estimated_latency_ms,
+                    "compute_estimate": depth_state.estimated_flops,
+                    "memory_mb": self.registry.get(plan.model).min_memory_mb if self.registry.get(plan.model) else 0.0,
+                    "estimated_energy": round(depth_state.estimated_latency_ms / 1000.0 * 25.0, 4),
+                    "estimated_cost": depth_state.estimated_cost_usd,
+                    "confidence": depth_state.confidence,
+                    "speculative": False,
+                    "verification": False,
                     "correct": True,
                 }
             else:
@@ -701,6 +740,40 @@ class DynamicStoppingController:
             reasoning_confidence_trace=last_reason_tel.get("confidence_trace", []) if last_reason_tel else [],
             reasoning_action_trace=last_reason_tel.get("action_trace", []) if last_reason_tel else [],
             reasoning_execution_mode=last_reason_tel.get("execution_mode", "SIMULATED_LATENT_REASONING") if last_reason_tel else "SIMULATED_LATENT_REASONING",
+            # Phase 7 Depth Telemetry
+            depth_enabled=last_depth_tel.get("depth_enabled", False) if last_depth_tel else False,
+            depth_strategy=last_depth_tel.get("depth_strategy") if last_depth_tel else None,
+            depth_total_layers=last_depth_tel.get("depth_total_layers", 0) if last_depth_tel else 0,
+            depth_requested=last_depth_tel.get("depth_requested", 0) if last_depth_tel else 0,
+            depth_executed=last_depth_tel.get("depth_executed", 0) if last_depth_tel else 0,
+            requested_depth=last_depth_tel.get("depth_requested", 0) if last_depth_tel else None,
+            actual_depth=last_depth_tel.get("depth_executed", 0) if last_depth_tel else None,
+            depth_layers_saved=last_depth_tel.get("depth_skipped_layers", 0) if last_depth_tel else 0,
+            depth_skipped_layers=last_depth_tel.get("depth_skipped_layers", 0) if last_depth_tel else 0,
+            depth_layer_ratio=last_depth_tel.get("depth_layer_ratio", 1.0) if last_depth_tel else 1.0,
+            depth_early_exit=last_depth_tel.get("depth_early_exit", False) if last_depth_tel else False,
+            early_exit=last_depth_tel.get("depth_early_exit", False) if last_depth_tel else False,
+            depth_exit_decision=last_depth_tel.get("depth_exit_decision") if last_depth_tel else None,
+            early_exit_reason=last_depth_tel.get("depth_stop_reason") if last_depth_tel else None,
+            depth_stop_reason=last_depth_tel.get("depth_stop_reason") if last_depth_tel else None,
+            depth_mod_enabled=last_depth_tel.get("depth_mod_enabled", False) if last_depth_tel else False,
+            mod_enabled=last_depth_tel.get("depth_mod_enabled", False) if last_depth_tel else False,
+            depth_mod_capacity=last_depth_tel.get("depth_mod_capacity", 1.0) if last_depth_tel else 1.0,
+            mod_capacity=last_depth_tel.get("depth_mod_capacity", 1.0) if last_depth_tel else 1.0,
+            depth_active_tokens=last_depth_tel.get("depth_active_tokens", 0) if last_depth_tel else 0,
+            mod_active_tokens=last_depth_tel.get("depth_active_tokens", 0) if last_depth_tel else 0,
+            depth_deep_tokens=last_depth_tel.get("depth_deep_tokens", 0) if last_depth_tel else 0,
+            mod_deep_tokens=last_depth_tel.get("depth_deep_tokens", 0) if last_depth_tel else 0,
+            depth_shallow_tokens=last_depth_tel.get("depth_shallow_tokens", 0) if last_depth_tel else 0,
+            mod_shallow_tokens=last_depth_tel.get("depth_shallow_tokens", 0) if last_depth_tel else 0,
+            mod_skipped_tokens=last_depth_tel.get("depth_skipped_tokens", 0) if last_depth_tel else 0,
+            depth_avg_token_depth=last_depth_tel.get("depth_avg_token_depth", 0.0) if last_depth_tel else 0.0,
+            depth_marginal_gain=last_depth_tel.get("depth_marginal_gain", 0.0) if last_depth_tel else 0.0,
+            depth_marginal_cost_usd=last_depth_tel.get("depth_marginal_cost_usd", 0.0) if last_depth_tel else 0.0,
+            depth_voi=last_depth_tel.get("depth_voi", 0.0) if last_depth_tel else 0.0,
+            depth_estimated_flops=last_depth_tel.get("depth_estimated_flops", 0.0) if last_depth_tel else 0.0,
+            depth_controller_overhead_ms=last_depth_tel.get("depth_controller_overhead_ms", 0.0) if last_depth_tel else 0.0,
+            depth_execution_mode=last_depth_tel.get("depth_execution_mode", "SIMULATED_DEPTH_EXECUTION") if last_depth_tel else "SIMULATED_DEPTH_EXECUTION",
         )
 
         final_plan = ExecutionPlan(

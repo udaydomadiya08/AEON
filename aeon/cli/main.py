@@ -36,14 +36,22 @@ def cli():
 @click.option("--draft-model", default=None, type=str, help="Specific draft model name to deploy")
 @click.option("--reasoning", is_flag=True, default=False, help="Enable AEON adaptive latent & token-efficient reasoning (Phase 6)")
 @click.option("--reason-strategy", default=None, type=click.Choice(["none", "direct", "shallow", "medium", "deep", "latent", "explicit", "tool_assisted", "model_escalation", "hybrid"]), help="Force specific reasoning strategy")
+@click.option("--adaptive-depth", "--depth", "adaptive_depth", is_flag=True, default=False, help="Enable AEON adaptive model depth & Mixture-of-Depths (Phase 7)")
+@click.option("--depth-strategy", default=None, type=click.Choice(["hybrid_depth", "full_depth", "fixed_early_exit", "adaptive_early_exit", "fixed_mod", "adaptive_mod"]), help="Force specific depth strategy")
+@click.option("--max-depth", default=None, type=int, help="Maximum allowed model layer depth")
+@click.option("--min-depth", default=None, type=int, help="Minimum allowed model layer depth")
+@click.option("--enable-early-exit", is_flag=True, default=False, help="Explicitly enable early exit evaluator")
+@click.option("--enable-mod", is_flag=True, default=False, help="Explicitly enable Mixture-of-Depths router")
+@click.option("--depth-budget", default=None, type=float, help="Explicit depth layer budget")
 @click.option("--trace", is_flag=True, help="Display detailed step-by-step controller VOI, memory, tool, and reasoning trace")
-def run(query: str, context: str, sla: float, budget: float, policy: str, cascade: bool, target_quality: float, memory: bool, memory_policy: str, tools: bool, speculate: bool, spec_strategy: str, draft_model: str, reasoning: bool, reason_strategy: str, trace: bool):
+def run(query: str, context: str, sla: float, budget: float, policy: str, cascade: bool, target_quality: float, memory: bool, memory_policy: str, tools: bool, speculate: bool, spec_strategy: str, draft_model: str, reasoning: bool, reason_strategy: str, adaptive_depth: bool, depth_strategy: str, max_depth: int, min_depth: int, enable_early_exit: bool, enable_mod: bool, depth_budget: float, trace: bool):
     """Run inference on a query with AEON adaptive compute optimization."""
     chosen_policy = "cascade" if cascade else policy
     from aeon.memory.hierarchy import global_memory_hierarchy
     from aeon.tools.tool_controller import global_tool_controller
     from aeon.speculation.controller import global_speculation_controller
     from aeon.reasoning.controller import global_reasoning_controller
+    from aeon.depth.controller import global_depth_controller
     aeon = AEON(
         policy=chosen_policy,
         memory=memory,
@@ -55,6 +63,8 @@ def run(query: str, context: str, sla: float, budget: float, policy: str, cascad
         speculation_controller=global_speculation_controller,
         reasoning=reasoning,
         reasoning_controller=global_reasoning_controller,
+        adaptive_depth=adaptive_depth,
+        depth_controller=global_depth_controller,
     )
     result = aeon.run(
         query=query,
@@ -69,6 +79,10 @@ def run(query: str, context: str, sla: float, budget: float, policy: str, cascad
         draft_model=draft_model,
         reasoning=reasoning,
         reasoning_strategy=reason_strategy,
+        adaptive_depth=adaptive_depth,
+        depth_strategy=depth_strategy,
+        max_depth=max_depth,
+        min_depth=min_depth,
     )
 
     if trace:
@@ -129,6 +143,20 @@ def run(query: str, context: str, sla: float, budget: float, policy: str, cascad
             click.echo(f"Answer Stable:     {result.trace.reasoning_answer_stable}")
             click.echo(f"Execution Mode:    {result.trace.reasoning_execution_mode}")
             click.echo("─────────────────────────────────────────────────")
+
+        if adaptive_depth or getattr(result.trace, "depth_enabled", False):
+            click.echo("\n──────────── AEON ADAPTIVE DEPTH & MOD ────────────")
+            click.echo(f"Strategy:          {result.trace.depth_strategy or 'hybrid_depth'}")
+            click.echo(f"Model Layers:      {result.trace.actual_depth}/{result.trace.requested_depth} (Saved: {result.trace.depth_layers_saved})")
+            click.echo(f"Early Exit:        {result.trace.early_exit} (Reason: {result.trace.early_exit_reason or 'NONE'})")
+            click.echo(f"MoD Enabled:       {result.trace.mod_enabled} (Capacity: {result.trace.mod_capacity:.2f})")
+            click.echo(f"Token Breakdown:   Active: {result.trace.mod_active_tokens} | Deep: {result.trace.mod_deep_tokens} | Shallow: {result.trace.mod_shallow_tokens} | Skipped: {result.trace.mod_skipped_tokens}")
+            click.echo(f"Marginal Gain:     +{result.trace.depth_marginal_gain:.4f} | Marginal Cost: ${result.trace.depth_marginal_cost_usd:.6f}")
+            click.echo(f"VOI Ratio:         {result.trace.depth_voi:.2f}")
+            click.echo(f"Estimated FLOPs:   {result.trace.depth_estimated_flops:.2e}")
+            click.echo(f"Controller OH:     {result.trace.depth_controller_overhead_ms:.2f} ms")
+            click.echo(f"Execution Mode:    {result.trace.depth_execution_mode}")
+            click.echo("────────────────────────────────────────────────────")
 
         if result.trace.trace_steps:
             click.echo("\n────────────── COMPUTE CONTROLLER ──────────────")
@@ -750,5 +778,99 @@ def reasoning_config():
     click.echo(json.dumps(dump_fn(), indent=2))
 
 
+@cli.group(name="depth")
+def depth():
+    """AEON Adaptive Model Depth & Mixture-of-Depths (Phase 7)."""
+    pass
+
+
+@depth.command(name="benchmark")
+@click.option("--runs", default=1, type=int, help="Number of evaluation passes")
+def depth_benchmark(runs: int):
+    """Run dedicated Phase 7 adaptive depth & MoD benchmark suite (7 Baselines)."""
+    harness = BenchmarkHarness()
+    click.echo("\nRunning AEON Phase 7 Adaptive Depth & MoD Benchmark Suite...\n")
+    results = harness.run_phase7(runs=runs)
+    click.echo("=" * 115)
+    click.echo(
+        f"{'Baseline Configuration':<36} | {'Quality':<7} | {'Latency':<9} | {'Cost ($)':<10} | {'Tokens':<8} | {'Quality/$':<11} | {'Quality/TFLOP':<13}"
+    )
+    click.echo("=" * 115)
+    for name, m in results.items():
+        lat_str = f"{m.mean_latency_ms:.1f}ms"
+        cost_str = f"${m.total_cost_usd:.5f}"
+        click.echo(
+            f"{name:<36} | {m.accuracy*100:>6.1f}% | {lat_str:>9} | {cost_str:>10} | {m.total_tokens:>8} | {m.quality_per_dollar:>11.0f} | {m.quality_per_tflops:>13.4f}"
+        )
+    click.echo("=" * 115)
+    click.echo()
+
+
+@depth.command(name="compare")
+def depth_compare():
+    """Compare depth & compute across all 12 workload modalities."""
+    harness = BenchmarkHarness()
+    click.echo("\nRunning Phase 7 Depth Workload Breakdown (12 Modalities)...\n")
+    res = harness.run_depth_workload_breakdown()
+    click.echo("=" * 115)
+    click.echo(
+        f"{'Modality':<20} | {'Full Depth':<10} | {'Adapt Depth':<11} | {'Depth Red.':<10} | {'Full Cost':<12} | {'Adapt Cost':<12} | {'Exit %':<7}"
+    )
+    click.echo("=" * 115)
+    for cat, d in res.items():
+        click.echo(
+            f"{cat:<20} | {d['mean_full_depth']:>10.1f} | {d['mean_adaptive_depth']:>11.1f} | {d['depth_reduction_pct']:>9.1f}% | ${d['mean_full_cost_usd']:>10.6f} | ${d['mean_adaptive_cost_usd']:>10.6f} | {d['early_exit_rate_pct']:>6.1f}%"
+        )
+    click.echo("=" * 115)
+    click.echo()
+
+
+@depth.command(name="ablation")
+def depth_ablation():
+    """Run Phase 7 depth and MoD component ablation study."""
+    harness = BenchmarkHarness()
+    click.echo("\nRunning Phase 7 Depth Component Ablation Study (10 Conditions)...\n")
+    res = harness.run_depth_ablation_study()
+    click.echo("=" * 110)
+    click.echo(
+        f"{'Ablation Variant':<30} | {'Quality':<8} | {'Latency':<10} | {'Cost':<12} | {'Mean Depth':<10} | {'Quality/$':<11}"
+    )
+    click.echo("=" * 110)
+    for name, d in res.items():
+        click.echo(
+            f"{name:<30} | {d['quality']*100:>6.1f}% | {d['mean_latency_ms']:>8.1f}ms | ${d['mean_cost_usd']:>10.6f} | {d['mean_depth']:>10.1f} | {d['quality_per_dollar']:>11.0f}"
+        )
+    click.echo("=" * 110)
+    click.echo()
+
+
+@depth.command(name="config")
+def depth_config():
+    """Inspect active adaptive model depth and MoD configuration."""
+    from aeon.depth.controller import global_depth_controller
+    cfg = global_depth_controller.config
+    dump_fn = getattr(cfg, "model_dump", cfg.dict)
+    click.echo(json.dumps(dump_fn(), indent=2))
+
+
+@depth.command(name="break-even")
+def depth_break_even():
+    """Compute and display Phase 7 economic break-even points."""
+    harness = BenchmarkHarness()
+    click.echo("\nComputing AEON Phase 7 Economic Break-Even Analysis...\n")
+    be = harness.run_depth_break_even_analysis()
+    click.echo(json.dumps(be, indent=2))
+
+
+@depth.command(name="overhead")
+def depth_overhead():
+    """Measure AEON controller overhead for depth decision evaluation."""
+    harness = BenchmarkHarness()
+    click.echo("\nMeasuring Phase 7 Depth Controller Latency Overhead...\n")
+    ov = harness.run_depth_controller_overhead()
+    click.echo(json.dumps(ov, indent=2))
+
+
 if __name__ == "__main__":
     cli()
+

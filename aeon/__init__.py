@@ -109,7 +109,28 @@ from aeon.reasoning.types import (
 from aeon.reasoning.economics import ReasoningEconomics
 from aeon.reasoning.strategies import ReasoningStrategySelector
 
-__version__ = "0.6.0"
+from aeon.depth.controller import DepthController, global_depth_controller
+from aeon.depth.types import (
+    DepthStrategy,
+    DepthExitDecision,
+    TokenImportanceSignal,
+    ModelDepthProfile,
+    TokenComputeState,
+    DepthExecutionState,
+    DepthCandidate,
+    DepthConfig,
+)
+from aeon.depth.profiles import ModelDepthRegistry, global_depth_registry, get_depth_profile, get_model_depth_profile
+from aeon.depth.cost_model import DepthCostModel, LayerCostModel, global_depth_cost_model
+from aeon.depth.token_importance import TokenImportanceEstimator, global_token_importance_estimator
+from aeon.depth.capacity_controller import CapacityController, global_capacity_controller
+from aeon.depth.mod_router import MoDRouter, global_mod_router
+from aeon.depth.early_exit import EarlyExitEvaluator, global_early_exit_evaluator
+from aeon.depth.economics import DepthEconomics, global_depth_economics
+from aeon.depth.backend import BaseDepthBackend, SimulationDepthBackend, global_simulation_depth_backend, global_depth_backend
+
+
+__version__ = "0.7.0"
 
 
 class AEON:
@@ -139,6 +160,12 @@ class AEON:
         speculation_controller: Optional[SpeculationController] = None,
         reasoning: bool = False,
         reasoning_controller: Optional[ReasoningController] = None,
+        adaptive_depth: bool = False,
+        depth: bool = False,
+        depth_strategy: Optional[str] = None,
+        max_depth: Optional[int] = None,
+        min_depth: Optional[int] = None,
+        depth_controller: Optional[DepthController] = None,
     ):
         self.registry = registry or global_registry
         self.backend = backend or SimulationBackend(self.registry)
@@ -149,6 +176,10 @@ class AEON:
         self.tools_enabled = tools
         self.speculation_enabled = speculation
         self.reasoning_enabled = reasoning
+        self.depth_enabled = adaptive_depth or depth
+        self.depth_strategy = depth_strategy
+        self.max_depth = max_depth
+        self.min_depth = min_depth
 
         # Initialize or assign memory hierarchy
         if memory_hierarchy is not None:
@@ -174,6 +205,9 @@ class AEON:
         # Initialize or assign reasoning controller
         self.reasoning_controller = reasoning_controller or global_reasoning_controller
 
+        # Initialize or assign depth controller
+        self.depth_controller = depth_controller or global_depth_controller
+
         self.voi_controller = DynamicStoppingController(
             backend=self.backend,
             registry=self.registry,
@@ -185,6 +219,8 @@ class AEON:
             speculation_enabled=self.speculation_enabled,
             reasoning_controller=self.reasoning_controller,
             reasoning_enabled=self.reasoning_enabled,
+            depth_controller=self.depth_controller,
+            depth_enabled=self.depth_enabled,
         )
         self.rules_controller = ComputeController(
             backend=self.backend,
@@ -197,6 +233,8 @@ class AEON:
             speculation_enabled=self.speculation_enabled,
             reasoning_controller=self.reasoning_controller,
             reasoning_enabled=self.reasoning_enabled,
+            depth_controller=self.depth_controller,
+            depth_enabled=self.depth_enabled,
         )
 
     @property
@@ -219,6 +257,11 @@ class AEON:
         """Access the adaptive latent & token-efficient reasoning controller."""
         return self.reasoning_controller
 
+    @property
+    def depth(self) -> DepthController:
+        """Access the adaptive model depth & Mixture-of-Depths controller."""
+        return self.depth_controller
+
     def run(
         self,
         query: Union[str, InferenceRequest],
@@ -240,6 +283,10 @@ class AEON:
         reasoning_strategy: Optional[str] = None,
         reasoning_budget_tokens: Optional[int] = None,
         reasoning_budget_cost: Optional[float] = None,
+        adaptive_depth: Optional[bool] = None,
+        depth_strategy: Optional[str] = None,
+        max_depth: Optional[int] = None,
+        min_depth: Optional[int] = None,
     ) -> InferenceResult:
         """Run an inference request through the AEON economically-optimized engine."""
         # Parse budget dictionary if provided
@@ -255,6 +302,7 @@ class AEON:
         active_tools = tools if tools is not None else self.tools_enabled
         active_speculation = speculation if speculation is not None else self.speculation_enabled
         active_reasoning = reasoning if reasoning is not None else self.reasoning_enabled
+        active_depth = adaptive_depth if adaptive_depth is not None else self.depth_enabled
 
         if isinstance(query, str):
             req = InferenceRequest(
@@ -278,6 +326,10 @@ class AEON:
                 reasoning_budget_tokens=reasoning_budget_tokens,
                 reasoning_budget_cost=reasoning_budget_cost,
                 target_confidence=target_quality,
+                adaptive_depth=active_depth,
+                depth_strategy=depth_strategy,
+                max_depth=max_depth,
+                min_depth=min_depth,
             )
         else:
             req = query
@@ -303,6 +355,16 @@ class AEON:
                 req.reasoning = reasoning
             elif req.reasoning is None and self.reasoning_enabled:
                 req.reasoning = True
+            if adaptive_depth is not None:
+                req.adaptive_depth = adaptive_depth
+            elif req.adaptive_depth is None and self.depth_enabled:
+                req.adaptive_depth = True
+            if depth_strategy and not req.depth_strategy:
+                req.depth_strategy = depth_strategy
+            if max_depth and not req.max_depth:
+                req.max_depth = max_depth
+            if min_depth and not req.min_depth:
+                req.min_depth = min_depth
             if reasoning_strategy and not req.reasoning_strategy:
                 req.reasoning_strategy = reasoning_strategy
             if reasoning_budget_tokens and not req.reasoning_budget_tokens:

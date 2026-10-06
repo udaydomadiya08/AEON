@@ -15,7 +15,7 @@ class DifficultyEstimator:
 
     # Patterns indicating high computational or reasoning difficulty
     MATH_SYMBOLS = re.compile(r"[\+\-\*\/\^=<>∑∏∫√%≤≥≠]")
-    LOGICAL_MARKERS = re.compile(r"\b(prove|deduce|if and only if|contradiction|contrapositive|axiom|hypothesis|conclude|therefore|theorem|lemma)\b", re.IGNORECASE)
+    LOGICAL_MARKERS = re.compile(r"\b(prove|proof|deduce|if and only if|contradiction|contrapositive|axiom|hypothesis|conclude|therefore|theorem|lemma)\b", re.IGNORECASE)
     CODE_MARKERS = re.compile(r"\b(def|class|function|return|import|async|await|pointer|recursion|algorithm|time complexity)\b", re.IGNORECASE)
     MULTI_STEP_MARKERS = re.compile(r"\b(step-by-step|first.*then|subsequently|compare and contrast|evaluate.*tradeoffs|multi-step)\b", re.IGNORECASE)
     AMBIGUITY_MARKERS = re.compile(r"\b(maybe|perhaps|opinion|subjective|speculate|could|might|unclear)\b", re.IGNORECASE)

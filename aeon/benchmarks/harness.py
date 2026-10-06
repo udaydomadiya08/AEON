@@ -1213,5 +1213,266 @@ class BenchmarkHarness:
             }
         return out
 
+    def run_phase7(self, runs: int = 1) -> Dict[str, AggregateMetrics]:
+        """
+        Phase 7 Comprehensive Comparative Benchmark.
+        Evaluates 7 Required Baselines across all 12 workload modalities:
+        - Baseline A: Full-depth computation
+        - Baseline B: Fixed early-exit
+        - Baseline C: Fixed MoD
+        - Baseline D: Adaptive early-exit
+        - Baseline E: Adaptive MoD
+        - Baseline F: AEON Phase 6 without Phase 7 (Full depth, adaptive reasoning/speculation/tools/memory)
+        - Baseline G: AEON Phase 7 Full System (Adaptive depth + MoD + Reasoning + Speculation + Tools + Memory)
+        """
+        from aeon.benchmarks.synthetic_workload import generate_phase7_depth_workload
+        from aeon import AEON
+
+        wl_dict = generate_phase7_depth_workload()
+        workload = []
+        for cat_queries in wl_dict.values():
+            workload.extend(cat_queries)
+
+        baselines_spec = [
+            ("Baseline A: Full Depth", dict(policy="rules", memory=False, tools=False, speculation=False, reasoning=False, adaptive_depth=True, depth_strategy="full_depth")),
+            ("Baseline B: Fixed Early Exit", dict(policy="rules", memory=False, tools=False, speculation=False, reasoning=False, adaptive_depth=True, depth_strategy="fixed_early_exit")),
+            ("Baseline C: Fixed MoD", dict(policy="rules", memory=False, tools=False, speculation=False, reasoning=False, adaptive_depth=True, depth_strategy="fixed_mod")),
+            ("Baseline D: Adaptive Early Exit", dict(policy="voi", memory=False, tools=False, speculation=False, reasoning=False, adaptive_depth=True, depth_strategy="adaptive_early_exit")),
+            ("Baseline E: Adaptive MoD", dict(policy="voi", memory=False, tools=False, speculation=False, reasoning=False, adaptive_depth=True, depth_strategy="adaptive_mod")),
+            ("Baseline F: AEON Phase 6 (No Phase 7)", dict(policy="voi", memory=True, tools=True, speculation=True, reasoning=True, adaptive_depth=False)),
+            ("Baseline G: AEON Phase 7 Full System", dict(policy="voi", memory=True, tools=True, speculation=True, reasoning=True, adaptive_depth=True, depth_strategy="hybrid_depth")),
+        ]
+
+        results: Dict[str, AggregateMetrics] = {}
+
+        for name, config_args in baselines_spec:
+            all_traces = []
+            for _ in range(max(1, runs)):
+                aeon_inst = AEON(**config_args)
+                for r in workload:
+                    req = r.model_copy(deep=True)
+                    if not config_args.get("adaptive_depth", True):
+                        req.adaptive_depth = False
+                    elif "depth_strategy" in config_args:
+                        req.depth_strategy = config_args["depth_strategy"]
+                    res = aeon_inst.run(req)
+                    all_traces.append(res.trace)
+            results[name] = calculate_aggregate_metrics(name, all_traces)
+
+        return results
+
+    def run_depth_ablation_study(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Phase 7 Depth Component Ablation Study across 10 mandatory conditions:
+        1. Full AEON Phase 7
+        2. Without early exit
+        3. Without MoD
+        4. Without adaptive capacity
+        5. Without token importance
+        6. Without depth VOI
+        7. Without confidence
+        8. Without calibration
+        9. Without Phase 6 reasoning
+        10. Without Phase 5 speculation
+        """
+        from aeon.benchmarks.synthetic_workload import generate_phase7_depth_workload
+        from aeon.depth.controller import DepthController
+        from aeon.depth.types import DepthConfig, DepthStrategy
+        from aeon import AEON
+
+        wl_dict = generate_phase7_depth_workload()
+        workload = []
+        for cat_queries in wl_dict.values():
+            workload.extend(cat_queries)
+
+        ablation_configs = [
+            ("Full AEON Phase 7", dict(
+                depth_cfg=DepthConfig(strategy=DepthStrategy.HYBRID_DEPTH, early_exit_enabled=True, mod_enabled=True, adaptive_capacity=True, voi_threshold=1.0),
+                policy="voi", reasoning=True, speculation=True
+            )),
+            ("Without Early Exit", dict(
+                depth_cfg=DepthConfig(strategy=DepthStrategy.ADAPTIVE_MOD, early_exit_enabled=False, mod_enabled=True),
+                policy="voi", reasoning=True, speculation=True
+            )),
+            ("Without MoD", dict(
+                depth_cfg=DepthConfig(strategy=DepthStrategy.ADAPTIVE_EARLY_EXIT, early_exit_enabled=True, mod_enabled=False),
+                policy="voi", reasoning=True, speculation=True
+            )),
+            ("Without Adaptive Capacity", dict(
+                depth_cfg=DepthConfig(strategy=DepthStrategy.HYBRID_DEPTH, adaptive_capacity=False),
+                policy="voi", reasoning=True, speculation=True
+            )),
+            ("Without Token Importance", dict(
+                depth_cfg=DepthConfig(strategy=DepthStrategy.HYBRID_DEPTH, uniform_importance=True),
+                policy="voi", reasoning=True, speculation=True
+            )),
+            ("Without Depth VOI", dict(
+                depth_cfg=DepthConfig(strategy=DepthStrategy.HYBRID_DEPTH, voi_threshold=-999.0),
+                policy="rules", reasoning=True, speculation=True
+            )),
+            ("Without Confidence", dict(
+                depth_cfg=DepthConfig(strategy=DepthStrategy.HYBRID_DEPTH, confidence_threshold=0.0),
+                policy="voi", reasoning=True, speculation=True
+            )),
+            ("Without Calibration", dict(
+                depth_cfg=DepthConfig(strategy=DepthStrategy.HYBRID_DEPTH, calibrated=False),
+                policy="voi", reasoning=True, speculation=True
+            )),
+            ("Without Phase 6 Reasoning", dict(
+                depth_cfg=DepthConfig(strategy=DepthStrategy.HYBRID_DEPTH),
+                policy="voi", reasoning=False, speculation=True
+            )),
+            ("Without Phase 5 Speculation", dict(
+                depth_cfg=DepthConfig(strategy=DepthStrategy.HYBRID_DEPTH),
+                policy="voi", reasoning=True, speculation=False
+            )),
+        ]
+
+        out: Dict[str, Dict[str, Any]] = {}
+        for name, spec in ablation_configs:
+            d_ctrl = DepthController(config=spec["depth_cfg"])
+            aeon_inst = AEON(
+                policy=spec["policy"],
+                memory=True,
+                tools=True,
+                reasoning=spec["reasoning"],
+                speculation=spec["speculation"],
+                adaptive_depth=True,
+                depth_controller=d_ctrl,
+            )
+            traces = []
+            for r in workload:
+                req = r.model_copy(deep=True)
+                req.adaptive_depth = True
+                req.reasoning = spec["reasoning"]
+                req.speculation = spec["speculation"]
+                res = aeon_inst.run(req)
+                traces.append(res.trace)
+
+            agg = calculate_aggregate_metrics(name, traces)
+            depths = [t.actual_depth for t in traces if t.actual_depth]
+            mean_d = sum(depths) / float(len(depths)) if depths else 0.0
+
+            out[name] = {
+                "quality": agg.accuracy,
+                "mean_latency_ms": agg.mean_latency_ms,
+                "mean_cost_usd": agg.mean_cost_usd,
+                "mean_depth": round(mean_d, 1),
+                "quality_per_dollar": agg.quality_per_dollar,
+                "quality_per_tflops": agg.quality_per_tflops,
+            }
+
+        return out
+
+    def run_depth_workload_breakdown(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Phase 7 Workload-Specific Depth Breakdown across all 12 modalities.
+        """
+        from aeon.benchmarks.synthetic_workload import generate_phase7_depth_workload
+        from aeon import AEON
+
+        wl_dict = generate_phase7_depth_workload()
+        out = {}
+
+        aeon_full = AEON(policy="rules", memory=False, tools=False, speculation=False, reasoning=False, adaptive_depth=True, depth_strategy="full_depth")
+        aeon_adaptive = AEON(policy="voi", memory=True, tools=True, speculation=True, reasoning=True, adaptive_depth=True, depth_strategy="hybrid_depth")
+
+        for cat, queries in wl_dict.items():
+            full_costs = []
+            full_lats = []
+            full_depths = []
+            for q in queries:
+                r = q.model_copy(deep=True)
+                r.adaptive_depth = True
+                r.depth_strategy = "full_depth"
+                res = aeon_full.run(r)
+                full_costs.append(res.cost)
+                full_lats.append(res.latency_ms)
+                full_depths.append(res.trace.actual_depth or 0)
+
+            adapt_costs = []
+            adapt_lats = []
+            adapt_depths = []
+            early_exits = 0
+            for q in queries:
+                r = q.model_copy(deep=True)
+                r.adaptive_depth = True
+                res = aeon_adaptive.run(r)
+                adapt_costs.append(res.cost)
+                adapt_lats.append(res.latency_ms)
+                adapt_depths.append(res.trace.actual_depth or 0)
+                if res.trace.early_exit:
+                    early_exits += 1
+
+            mean_fc = sum(full_costs) / float(len(full_costs))
+            mean_ac = sum(adapt_costs) / float(len(adapt_costs))
+            mean_fd = sum(full_depths) / float(len(full_depths))
+            mean_ad = sum(adapt_depths) / float(len(adapt_depths))
+
+            out[cat] = {
+                "mean_full_depth": round(mean_fd, 1),
+                "mean_adaptive_depth": round(mean_ad, 1),
+                "depth_reduction_pct": round((1.0 - mean_ad / max(1.0, mean_fd)) * 100, 1),
+                "mean_full_cost_usd": round(mean_fc, 7),
+                "mean_adaptive_cost_usd": round(mean_ac, 7),
+                "cost_savings_pct": round((1.0 - mean_ac / max(1e-7, mean_fc)) * 100, 1),
+                "early_exit_rate_pct": round((early_exits / float(len(queries))) * 100, 1),
+            }
+        return out
+
+    def run_depth_break_even_analysis(self) -> Dict[str, Any]:
+        """
+        Phase 7 Break-Even Analysis between marginal quality gains and layer computation costs.
+        """
+        from aeon.depth.economics import compute_break_even_analysis
+        from aeon.depth.profiles import get_model_depth_profile
+
+        profile = get_model_depth_profile("aeon-large-70b")
+        return compute_break_even_analysis(
+            profile=profile,
+            overhead_ms=0.25,
+            overhead_usd=0.000001,
+            val_per_q=0.002,
+        )
+
+    def run_depth_controller_overhead(self) -> Dict[str, Any]:
+        """
+        Phase 7 Controller Overhead Benchmark.
+        Measures AEON's own depth decision controller overhead vs compute saved.
+        """
+        import time
+        from aeon.depth.controller import DepthController
+        from aeon.types import InferenceRequest, RouteChoice, TaskType, DifficultyLevel
+
+        ctrl = DepthController()
+        req = InferenceRequest(query="Test query for controller latency profiling", adaptive_depth=True)
+        route = RouteChoice.LARGE_MODEL
+
+        times = []
+        for _ in range(50):
+            t0 = time.perf_counter()
+            ans, state, tel = ctrl.execute_depth_inference(req, model_name="aeon-large-70b", query_tokens=15, target_quality=0.85)
+            dt_ms = (time.perf_counter() - t0) * 1000.0
+            times.append(dt_ms)
+
+        mean_ms = sum(times) / len(times)
+        min_ms = min(times)
+        max_ms = max(times)
+        times_sorted = sorted(times)
+        median_ms = times_sorted[len(times_sorted) // 2]
+        var = sum((x - mean_ms) ** 2 for x in times) / len(times)
+        std_ms = var ** 0.5
+
+        return {
+            "controller_overhead_mean_ms": round(mean_ms, 3),
+            "controller_overhead_median_ms": round(median_ms, 3),
+            "controller_overhead_min_ms": round(min_ms, 3),
+            "controller_overhead_max_ms": round(max_ms, 3),
+            "controller_overhead_std_ms": round(std_ms, 3),
+            "controller_overhead_usd": round(mean_ms * 1e-6, 8),
+            "is_overhead_negligible": mean_ms < 5.0,
+        }
+
+
 
 

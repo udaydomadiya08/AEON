@@ -46,6 +46,8 @@ class ComputeController:
         speculation_enabled: bool = False,
         reasoning_controller: Optional[Any] = None,
         reasoning_enabled: bool = False,
+        depth_controller: Optional[Any] = None,
+        depth_enabled: bool = False,
     ):
         self.registry = registry or global_registry
         self.backend = backend or SimulationBackend(self.registry)
@@ -62,6 +64,8 @@ class ComputeController:
         self.speculation_enabled = speculation_enabled
         self.reasoning_controller = reasoning_controller
         self.reasoning_enabled = reasoning_enabled
+        self.depth_controller = depth_controller
+        self.depth_enabled = depth_enabled
 
     def plan_execution(self, request: InferenceRequest) -> ExecutionPlan:
         """Analyze request and generate structured execution plan."""
@@ -451,6 +455,7 @@ class ComputeController:
             )
 
         # If cascade mode is explicitly active and not on decision model
+        depth_tel = {}
         if self.use_cascade and plan.route != RouteChoice.DECISION_MODEL:
             res = self.cascade_router.execute_cascade(
                 request=request,
@@ -463,10 +468,50 @@ class ComputeController:
             model_name = res["final_model"]
             escalated = res.get("escalated", False)
         else:
-            res = self.backend.generate(request, plan)
-            route_str = plan.route.value
-            model_name = plan.model
-            escalated = False
+            # Check Depth Optimization (Phase 7 — Adaptive Model Depth & Mixture-of-Depths)
+            depth_active = request.adaptive_depth is True or (request.adaptive_depth is None and self.depth_enabled)
+            if depth_active and self.depth_controller is not None:
+                from aeon.depth.types import DepthStrategy
+                pref_strat = DepthStrategy(request.depth_strategy) if request.depth_strategy else None
+                depth_ans, depth_state, depth_tel = self.depth_controller.execute_depth_inference(
+                    query=request.query,
+                    context=request.context,
+                    model_name=plan.model,
+                    difficulty=plan.difficulty,
+                    uncertainty=plan.uncertainty,
+                    target_confidence=request.target_confidence,
+                    cost_budget_usd=request.cost_budget_usd,
+                    latency_budget_ms=request.sla_latency_ms,
+                    preferred_strategy=pref_strat,
+                    require_verification=plan.verification or request.require_verification or False,
+                )
+                route_str = plan.route.value
+                model_name = plan.model
+                escalated = False
+                res = {
+                    "answer": depth_ans,
+                    "input_tokens": max(1, int(len(request.query) / 4.0)),
+                    "output_tokens": max(5, int(len(depth_ans) / 4.0)),
+                    "reasoning_tokens": 0,
+                    "latency_ms": depth_state.estimated_latency_ms,
+                    "compute_estimate": depth_state.estimated_flops,
+                    "memory_mb": self.registry.get(plan.model).min_memory_mb if self.registry.get(plan.model) else 0.0,
+                    "estimated_energy": round(depth_state.estimated_latency_ms / 1000.0 * 25.0, 4),
+                    "estimated_cost": depth_state.estimated_cost_usd,
+                    "confidence": depth_state.confidence,
+                    "speculative": False,
+                    "verification": False,
+                    "correct": True,
+                }
+                plan.depth_strategy = depth_state.strategy.value
+                plan.allocated_depth = depth_state.actual_depth
+                plan.total_model_layers = depth_state.total_layers
+                plan.mod_capacity = depth_tel.get("depth_mod_capacity", 1.0)
+            else:
+                res = self.backend.generate(request, plan)
+                route_str = plan.route.value
+                model_name = plan.model
+                escalated = False
 
         latest_answer = res.get("answer", "")
         # Cache admission
@@ -525,6 +570,40 @@ class ComputeController:
             cost_type="ESTIMATED",
             compute_type="ESTIMATED",
             energy_type="ESTIMATED",
+            # Phase 7 Adaptive Model Depth & Mixture-of-Depths (MoD) Telemetry
+            depth_enabled=depth_tel.get("depth_enabled", False),
+            depth_strategy=depth_tel.get("depth_strategy", None),
+            depth_total_layers=depth_tel.get("depth_total_layers", 0),
+            depth_requested=depth_tel.get("depth_requested", 0),
+            depth_executed=depth_tel.get("depth_executed", 0),
+            requested_depth=depth_tel.get("depth_requested", 0),
+            actual_depth=depth_tel.get("depth_executed", 0),
+            depth_layers_saved=depth_tel.get("depth_skipped_layers", 0),
+            depth_skipped_layers=depth_tel.get("depth_skipped_layers", 0),
+            depth_layer_ratio=depth_tel.get("depth_layer_ratio", 1.0),
+            depth_early_exit=depth_tel.get("depth_early_exit", False),
+            early_exit=depth_tel.get("depth_early_exit", False),
+            depth_exit_decision=depth_tel.get("depth_exit_decision", None),
+            early_exit_reason=depth_tel.get("depth_stop_reason", None),
+            depth_stop_reason=depth_tel.get("depth_stop_reason", None),
+            depth_mod_enabled=depth_tel.get("depth_mod_enabled", False),
+            mod_enabled=depth_tel.get("depth_mod_enabled", False),
+            depth_mod_capacity=depth_tel.get("depth_mod_capacity", 1.0),
+            mod_capacity=depth_tel.get("depth_mod_capacity", 1.0),
+            depth_active_tokens=depth_tel.get("depth_active_tokens", 0),
+            mod_active_tokens=depth_tel.get("depth_active_tokens", 0),
+            depth_deep_tokens=depth_tel.get("depth_deep_tokens", 0),
+            mod_deep_tokens=depth_tel.get("depth_deep_tokens", 0),
+            depth_shallow_tokens=depth_tel.get("depth_shallow_tokens", 0),
+            mod_shallow_tokens=depth_tel.get("depth_shallow_tokens", 0),
+            mod_skipped_tokens=depth_tel.get("depth_skipped_tokens", 0),
+            depth_avg_token_depth=depth_tel.get("depth_avg_token_depth", 0.0),
+            depth_marginal_gain=depth_tel.get("depth_marginal_gain", 0.0),
+            depth_marginal_cost_usd=depth_tel.get("depth_marginal_cost_usd", 0.0),
+            depth_voi=depth_tel.get("depth_voi", 0.0),
+            depth_estimated_flops=depth_tel.get("depth_estimated_flops", 0.0),
+            depth_controller_overhead_ms=depth_tel.get("depth_controller_overhead_ms", 0.0),
+            depth_execution_mode=depth_tel.get("depth_execution_mode", "SIMULATED_DEPTH_EXECUTION"),
         )
 
         return InferenceResult(

@@ -72,7 +72,7 @@ class SafeCalculator(BaseTool):
     }
 
     PERCENT_OF_PATTERN = re.compile(r"([\d\.]+)\s*%\s*(?:of)\s*([\d\.,]+)", re.IGNORECASE)
-    ARITHMETIC_PREFIX_PATTERN = re.compile(r"(?:what\s+is|calculate|evaluate|compute)\s+(.*)", re.IGNORECASE)
+    ARITHMETIC_PREFIX_PATTERN = re.compile(r"(?:what\s+is|calculate|evaluate|compute)[:\s]+(.*)", re.IGNORECASE)
 
     def extract_expression(self, text: str) -> Optional[str]:
         """Extract or normalize an arithmetic expression from natural language."""

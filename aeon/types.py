@@ -115,6 +115,16 @@ class ControllerAction(str, Enum):
     CONVERT_TO_LATENT = "CONVERT_TO_LATENT"
     CONVERT_TO_EXPLICIT = "CONVERT_TO_EXPLICIT"
     STOP_REASONING = "STOP_REASONING"
+    # Phase 7 Adaptive Depth & MoD Actions
+    KEEP_DEPTH = "KEEP_DEPTH"
+    INCREASE_DEPTH = "INCREASE_DEPTH"
+    DECREASE_DEPTH = "DECREASE_DEPTH"
+    EARLY_EXIT = "EARLY_EXIT"
+    ALLOCATE_MORE_TO_TOKEN = "ALLOCATE_MORE_TO_TOKEN"
+    ALLOCATE_LESS_TO_TOKEN = "ALLOCATE_LESS_TO_TOKEN"
+    ENABLE_MOD = "ENABLE_MOD"
+    DISABLE_MOD = "DISABLE_MOD"
+    FALLBACK_FULL_DEPTH = "FALLBACK_FULL_DEPTH"
 
 
 class DecisionReason(str, Enum):
@@ -159,6 +169,12 @@ class DecisionReason(str, Enum):
     REASONING_STOPPED_STAGNATION = "REASONING_STOPPED_STAGNATION"
     REASONING_STOPPED_STABLE_ANSWER = "REASONING_STOPPED_STABLE_ANSWER"
     REASONING_STOPPED_LOW_VOI = "REASONING_STOPPED_LOW_VOI"
+    # Phase 7 Adaptive Depth & MoD Decision Reasons
+    DEPTH_EARLY_EXIT_VIABLE = "DEPTH_EARLY_EXIT_VIABLE"
+    DEPTH_FULL_REQUIRED = "DEPTH_FULL_REQUIRED"
+    DEPTH_LOW_MARGINAL_GAIN = "DEPTH_LOW_MARGINAL_GAIN"
+    MOD_CAPACITY_OPTIMIZED = "MOD_CAPACITY_OPTIMIZED"
+    DEPTH_BUDGET_EXHAUSTED = "DEPTH_BUDGET_EXHAUSTED"
 
 
 class UtilityWeights(BaseModel):
@@ -309,6 +325,41 @@ class Telemetry(BaseModel):
     reasoning_action_trace: List[Dict[str, Any]] = Field(default_factory=list)
     reasoning_execution_mode: str = "SIMULATED_LATENT_REASONING"
 
+    # Phase 7 Adaptive Model Depth & Mixture-of-Depths (MoD) Telemetry
+    depth_enabled: bool = False
+    depth_strategy: Optional[str] = None
+    depth_total_layers: int = 0
+    depth_requested: int = 0
+    depth_executed: int = 0
+    requested_depth: Optional[int] = None
+    actual_depth: Optional[int] = None
+    depth_layers_saved: int = 0
+    depth_skipped_layers: int = 0
+    depth_layer_ratio: float = 1.0
+    depth_early_exit: bool = False
+    early_exit: bool = False
+    depth_exit_decision: Optional[str] = None
+    early_exit_reason: Optional[str] = None
+    depth_stop_reason: Optional[str] = None
+    depth_mod_enabled: bool = False
+    mod_enabled: bool = False
+    depth_mod_capacity: float = 1.0
+    mod_capacity: float = 1.0
+    depth_active_tokens: int = 0
+    mod_active_tokens: int = 0
+    depth_deep_tokens: int = 0
+    mod_deep_tokens: int = 0
+    depth_shallow_tokens: int = 0
+    mod_shallow_tokens: int = 0
+    mod_skipped_tokens: int = 0
+    depth_avg_token_depth: float = 0.0
+    depth_marginal_gain: float = 0.0
+    depth_marginal_cost_usd: float = 0.0
+    depth_voi: float = 0.0
+    depth_estimated_flops: float = 0.0
+    depth_controller_overhead_ms: float = 0.0
+    depth_execution_mode: str = "SIMULATED_DEPTH_EXECUTION"
+
 
 class ComputeState(BaseModel):
     """
@@ -386,6 +437,13 @@ class InferenceRequest(BaseModel):
     reasoning_budget_tokens: Optional[int] = None
     reasoning_budget_cost: Optional[float] = None
     target_confidence: Optional[float] = None
+    # Phase 7 Adaptive Depth & MoD Request Options
+    adaptive_depth: Optional[bool] = None
+    depth_strategy: Optional[str] = None
+    max_depth: Optional[int] = None
+    min_depth: Optional[int] = None
+    enable_early_exit: Optional[bool] = None
+    enable_mod: Optional[bool] = None
 
 
 class ExecutionPlan(BaseModel):
@@ -411,6 +469,11 @@ class ExecutionPlan(BaseModel):
     reasoning_model: Optional[str] = None
     reasoning_budget_tokens: int = 0
     reasoning_depth: int = 0
+    # Phase 7 Adaptive Depth Plan Fields
+    depth_strategy: Optional[str] = None
+    allocated_depth: int = 0
+    total_model_layers: int = 0
+    mod_capacity: float = 1.0
 
 
 class InferenceResult(BaseModel):
