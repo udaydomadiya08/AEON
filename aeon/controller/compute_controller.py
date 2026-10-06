@@ -48,6 +48,8 @@ class ComputeController:
         reasoning_enabled: bool = False,
         depth_controller: Optional[Any] = None,
         depth_enabled: bool = False,
+        hardware_controller: Optional[Any] = None,
+        hardware_enabled: bool = False,
     ):
         self.registry = registry or global_registry
         self.backend = backend or SimulationBackend(self.registry)
@@ -66,6 +68,8 @@ class ComputeController:
         self.reasoning_enabled = reasoning_enabled
         self.depth_controller = depth_controller
         self.depth_enabled = depth_enabled
+        self.hardware_controller = hardware_controller
+        self.hardware_enabled = hardware_enabled
 
     def plan_execution(self, request: InferenceRequest) -> ExecutionPlan:
         """Analyze request and generate structured execution plan."""
@@ -93,6 +97,31 @@ class ComputeController:
 
         selected_model = self.registry.get_model_for_route(route)
 
+        # Check Hardware Optimization (Phase 8 — Hardware, Device, Precision & Quantization)
+        hw_active = (request.hardware_aware is True or (request.hardware_aware is None and self.hardware_enabled)) and self.hardware_controller is not None
+        hw_device = None
+        hw_precision = None
+        hw_quant = None
+        hw_mode = None
+        if hw_active:
+            hw_dec = self.hardware_controller.evaluate_and_select(
+                query=request.query,
+                model_name=selected_model.name,
+                difficulty=difficulty,
+                uncertainty=uncertainty,
+                sla_latency_ms=request.sla_latency_ms,
+                cost_budget_usd=request.cost_budget_usd,
+                memory_budget_mb=request.memory_budget_mb,
+                target_quality=request.target_quality,
+                preferred_device=request.device,
+                preferred_precision=request.precision,
+                preferred_quantization=request.quantization,
+            )
+            hw_device = hw_dec.device.value
+            hw_precision = hw_dec.precision.value
+            hw_quant = hw_dec.quantization.value
+            hw_mode = hw_dec.execution_mode.value
+
         return ExecutionPlan(
             task_type=task_type,
             difficulty=difficulty,
@@ -106,6 +135,10 @@ class ComputeController:
             verification=needs_verification,
             cache=True,
             stop_policy="confidence" if route != RouteChoice.LARGE_MODEL else "value_of_compute",
+            hardware_device=hw_device,
+            precision=hw_precision,
+            quantization=hw_quant,
+            hardware_execution_mode=hw_mode,
         )
 
     def run(self, request: InferenceRequest) -> InferenceResult:
@@ -550,6 +583,35 @@ class ComputeController:
                 ttl_seconds=1800.0,
             )
 
+        # Check Hardware Optimization (Phase 8 — Hardware, Device, Precision & Quantization)
+        hw_active = (request.hardware_aware is True or (request.hardware_aware is None and self.hardware_enabled)) and self.hardware_controller is not None
+        hw_dec = None
+        if hw_active:
+            hw_dec = self.hardware_controller.evaluate_and_select(
+                query=request.query,
+                model_name=plan.model,
+                difficulty=plan.difficulty,
+                uncertainty=plan.uncertainty,
+                sla_latency_ms=request.sla_latency_ms,
+                cost_budget_usd=request.cost_budget_usd,
+                memory_budget_mb=request.memory_budget_mb,
+                target_quality=request.target_quality,
+                preferred_device=request.device,
+                preferred_precision=request.precision,
+                preferred_quantization=request.quantization,
+                depth_layers=plan.allocated_depth if plan.allocated_depth > 0 else None,
+                total_layers=plan.total_model_layers if plan.total_model_layers > 0 else None,
+            )
+            plan.hardware_device = hw_dec.device.value
+            plan.precision = hw_dec.precision.value
+            plan.quantization = hw_dec.quantization.value
+            plan.hardware_execution_mode = hw_dec.execution_mode.value
+            if not depth_active:
+                res["latency_ms"] = hw_dec.latency_ms
+                res["estimated_cost"] = hw_dec.cost_usd
+                res["estimated_energy"] = hw_dec.energy_joules
+                res["memory_mb"] = hw_dec.memory_mb
+
         # Build telemetry conforming to Section 20
         telemetry = Telemetry(
             request_id=request_id,
@@ -609,6 +671,28 @@ class ComputeController:
             depth_estimated_flops=depth_tel.get("depth_estimated_flops", 0.0),
             depth_controller_overhead_ms=depth_tel.get("depth_controller_overhead_ms", 0.0),
             depth_execution_mode=depth_tel.get("depth_execution_mode", "SIMULATED_DEPTH_EXECUTION"),
+            # Phase 8 Hardware Telemetry
+            hardware_enabled=hw_active,
+            hardware_profile_id=self.hardware_controller.profile.profile_id if (hw_active and self.hardware_controller) else None,
+            hardware_device=hw_dec.device.value if hw_dec else None,
+            hardware_accelerator=self.hardware_controller.profile.accelerator_name if (hw_active and self.hardware_controller) else None,
+            precision_requested=request.precision,
+            precision_selected=hw_dec.precision.value if hw_dec else "FP32",
+            quantization_requested=request.quantization,
+            quantization_selected=hw_dec.quantization.value if hw_dec else "none",
+            quantization_status=hw_dec.quantization.value if hw_dec else "none",
+            memory_total_mb=self.hardware_controller.profile.ram_total_mb if (hw_active and self.hardware_controller) else 0.0,
+            memory_available_mb=self.hardware_controller.profile.ram_available_mb if (hw_active and self.hardware_controller) else 0.0,
+            memory_estimated_mb=hw_dec.memory_mb if hw_dec else 0.0,
+            memory_pressure_level=self.hardware_controller.profile.memory_pressure.value if (hw_active and self.hardware_controller) else "NORMAL",
+            thermal_state=self.hardware_controller.profile.thermal_pressure.value if (hw_active and self.hardware_controller) else "NOMINAL",
+            energy_joules=hw_dec.energy_joules if hw_dec else 0.0,
+            energy_status=hw_dec.execution_mode.value if hw_dec else "ESTIMATED",
+            hardware_utility=hw_dec.utility if hw_dec else 0.0,
+            hardware_controller_overhead_ms=hw_dec.provenance.get("controller_overhead_ms", 0.0) if hw_dec else 0.0,
+            hardware_execution_mode=hw_dec.execution_mode.value if hw_dec else "MEASURED",
+            hardware_decision_reason=hw_dec.decision_reason if hw_dec else None,
+            hardware_fallbacks=hw_dec.fallbacks_triggered if hw_dec else [],
         )
 
         return InferenceResult(

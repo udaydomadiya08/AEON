@@ -43,8 +43,13 @@ def cli():
 @click.option("--enable-early-exit", is_flag=True, default=False, help="Explicitly enable early exit evaluator")
 @click.option("--enable-mod", is_flag=True, default=False, help="Explicitly enable Mixture-of-Depths router")
 @click.option("--depth-budget", default=None, type=float, help="Explicit depth layer budget")
+@click.option("--hardware-aware", is_flag=True, default=False, help="Enable AEON hardware-aware precision & quantization (Phase 8)")
+@click.option("--device", default=None, type=str, help="Preferred execution device (auto, cpu, mps, cuda)")
+@click.option("--precision", default=None, type=str, help="Preferred precision (auto, fp32, fp16, bf16, int8, fp8)")
+@click.option("--quantization", default=None, type=str, help="Preferred quantization method (auto, none, int8_weight_only, simulated_int8)")
+@click.option("--memory-budget", default=None, type=float, help="Explicit memory budget in MB")
 @click.option("--trace", is_flag=True, help="Display detailed step-by-step controller VOI, memory, tool, and reasoning trace")
-def run(query: str, context: str, sla: float, budget: float, policy: str, cascade: bool, target_quality: float, memory: bool, memory_policy: str, tools: bool, speculate: bool, spec_strategy: str, draft_model: str, reasoning: bool, reason_strategy: str, adaptive_depth: bool, depth_strategy: str, max_depth: int, min_depth: int, enable_early_exit: bool, enable_mod: bool, depth_budget: float, trace: bool):
+def run(query: str, context: str, sla: float, budget: float, policy: str, cascade: bool, target_quality: float, memory: bool, memory_policy: str, tools: bool, speculate: bool, spec_strategy: str, draft_model: str, reasoning: bool, reason_strategy: str, adaptive_depth: bool, depth_strategy: str, max_depth: int, min_depth: int, enable_early_exit: bool, enable_mod: bool, depth_budget: float, hardware_aware: bool, device: str, precision: str, quantization: str, memory_budget: float, trace: bool):
     """Run inference on a query with AEON adaptive compute optimization."""
     chosen_policy = "cascade" if cascade else policy
     from aeon.memory.hierarchy import global_memory_hierarchy
@@ -52,6 +57,7 @@ def run(query: str, context: str, sla: float, budget: float, policy: str, cascad
     from aeon.speculation.controller import global_speculation_controller
     from aeon.reasoning.controller import global_reasoning_controller
     from aeon.depth.controller import global_depth_controller
+    from aeon.hardware.controller import global_hardware_controller
     aeon = AEON(
         policy=chosen_policy,
         memory=memory,
@@ -65,6 +71,8 @@ def run(query: str, context: str, sla: float, budget: float, policy: str, cascad
         reasoning_controller=global_reasoning_controller,
         adaptive_depth=adaptive_depth,
         depth_controller=global_depth_controller,
+        hardware_aware=hardware_aware,
+        hardware_controller=global_hardware_controller,
     )
     result = aeon.run(
         query=query,
@@ -83,6 +91,11 @@ def run(query: str, context: str, sla: float, budget: float, policy: str, cascad
         depth_strategy=depth_strategy,
         max_depth=max_depth,
         min_depth=min_depth,
+        hardware_aware=hardware_aware,
+        device=device,
+        precision=precision,
+        quantization=quantization,
+        memory_budget_mb=memory_budget,
     )
 
     if trace:
@@ -871,6 +884,156 @@ def depth_overhead():
     click.echo(json.dumps(ov, indent=2))
 
 
+# =========================================================================
+# Phase 8 Hardware & Quantization CLI Subsystem
+# =========================================================================
+
+@cli.group(name="hardware")
+def hardware():
+    """AEON Hardware Detection, Precision & Quantization Subsystem (Phase 8)."""
+    pass
+
+
+@hardware.command(name="info")
+def hardware_info():
+    """Display comprehensive host hardware and accelerator capability overview."""
+    from aeon.hardware.controller import global_hardware_controller
+    prof = global_hardware_controller.profile
+
+    click.echo("\n==================== AEON HARDWARE PROFILE ====================")
+    click.echo(f"Profile ID:          {prof.profile_id}")
+    click.echo(f"Operating System:    {prof.os_name} ({prof.machine_arch})")
+    click.echo(f"Host CPU:            {prof.cpu_model}")
+    click.echo(f"Physical/Log Cores:  {prof.cpu_cores_physical} physical / {prof.cpu_cores_logical} logical")
+    click.echo(f"System RAM:          {prof.ram_total_mb:.1f} MB (Available: {prof.ram_available_mb:.1f} MB)")
+    click.echo(f"Unified Memory:      {prof.unified_memory}")
+    click.echo(f"Memory Pressure:     {prof.memory_pressure.value.upper()}")
+    click.echo(f"Thermal State:       {prof.thermal_pressure.value.upper()}")
+    click.echo("-------------------- ACCELERATOR ENGINE --------------------")
+    click.echo(f"Device Class:        {prof.accelerator_type.value.upper()}")
+    click.echo(f"Accelerator Name:    {prof.accelerator_name}")
+    click.echo(f"Device Count:        {prof.accelerator_count}")
+    click.echo(f"VRAM / Addr Memory:  {prof.accelerator_memory_mb:.1f} MB")
+    click.echo(f"PyTorch Version:     {prof.pytorch_version} (MPS: {prof.mps_available}, CUDA: {prof.cuda_available})")
+    click.echo("------------------- PRECISION COMPATIBILITY ----------------")
+    for p, status in prof.supported_precisions.items():
+        click.echo(f"  - {p:<8}: {status.upper()}")
+    click.echo("------------------- QUANTIZATION STATUS -------------------")
+    for q, status in prof.quantization_support.items():
+        click.echo(f"  - {q:<18}: {status.upper()}")
+    click.echo("===============================================================\n")
+
+
+@hardware.command(name="detect")
+def hardware_detect():
+    """Detect and output raw machine hardware profile as JSON."""
+    from aeon.hardware.detector import HardwareDetector
+    detector = HardwareDetector()
+    prof = detector.detect_hardware(force_refresh=True)
+    dump_fn = getattr(prof, "model_dump", prof.dict)
+    click.echo(json.dumps(dump_fn(), indent=2))
+
+
+@hardware.command(name="precision")
+def hardware_precision():
+    """Inspect standard numerical precision profiles and analytical scaling factors."""
+    from aeon.hardware.precision import STANDARD_PRECISION_PROFILES
+    click.echo("\n==================== AEON PRECISION PROFILES ====================")
+    click.echo(f"{'Precision':<10} | {'Bits':<6} | {'Mem Factor':<12} | {'Compute Factor':<15} | {'Quality Delta':<14} | {'Status':<12}")
+    click.echo("=" * 80)
+    for p, prof in STANDARD_PRECISION_PROFILES.items():
+        click.echo(
+            f"{p.value:<10} | {prof.bits:<6} | {prof.memory_factor:<12.2f} | {prof.compute_factor:<15.2f} | {prof.quality_delta:<14.4f} | {prof.status.value.upper():<12}"
+        )
+    click.echo("=" * 80)
+    click.echo()
+
+
+@hardware.command(name="quantization")
+def hardware_quantization():
+    """Inspect quantization methods, memory reductions, and real vs simulated status."""
+    from aeon.hardware.controller import global_hardware_controller
+    prof = global_hardware_controller.profile
+    click.echo("\n==================== AEON QUANTIZATION METHODS ====================")
+    click.echo(f"{'Method':<20} | {'Status':<14} | {'Classification':<16} | {'Target Precision':<16}")
+    click.echo("=" * 72)
+    for q, status in prof.quantization_support.items():
+        is_sim = "SIMULATED" if "simulated" in q or status == "simulated" else "SUPPORTED"
+        prec = "INT8" if "int8" in q else "FP8"
+        click.echo(f"{q:<20} | {status.upper():<14} | {is_sim:<16} | {prec:<16}")
+    click.echo("=" * 72)
+    click.echo()
+
+
+@hardware.command(name="benchmark")
+@click.option("--runs", default=1, type=int, help="Number of evaluation passes")
+def hardware_benchmark(runs: int):
+    """Run dedicated Phase 8 hardware & quantization benchmark suite (7 Baselines)."""
+    harness = BenchmarkHarness()
+    click.echo("\nRunning AEON Phase 8 Hardware & Quantization Benchmark Suite...\n")
+    results = harness.run_phase8(runs=runs)
+    click.echo("=" * 115)
+    click.echo(
+        f"{'Baseline Configuration':<38} | {'Quality':<7} | {'Latency':<9} | {'Cost ($)':<10} | {'Tokens':<8} | {'Quality/$':<11} | {'Quality/TFLOP':<13}"
+    )
+    click.echo("=" * 115)
+    for name, m in results.items():
+        lat_str = f"{m.mean_latency_ms:.1f}ms"
+        cost_str = f"${m.total_cost_usd:.5f}"
+        click.echo(
+            f"{name:<38} | {m.accuracy*100:>6.1f}% | {lat_str:>9} | {cost_str:>10} | {m.total_tokens:>8} | {m.quality_per_dollar:>11.0f} | {m.quality_per_tflops:>13.4f}"
+        )
+    click.echo("=" * 115)
+    click.echo()
+
+
+@hardware.command(name="ablation")
+def hardware_ablation():
+    """Run Phase 8 hardware, precision, and quantization ablation study (10 Conditions)."""
+    harness = BenchmarkHarness()
+    click.echo("\nRunning Phase 8 Hardware & Quantization Ablation Study (10 Conditions)...\n")
+    res = harness.run_hardware_ablation_study()
+    click.echo("=" * 105)
+    click.echo(
+        f"{'Ablation Variant':<30} | {'Quality':<8} | {'Latency':<10} | {'Cost ($/req)':<14} | {'Quality/$':<11}"
+    )
+    click.echo("=" * 105)
+    for name, d in res.items():
+        click.echo(
+            f"{name:<30} | {d['quality']*100:>6.1f}% | {d['mean_latency_ms']:>8.1f}ms | ${d['mean_cost_usd']:>12.6f} | {d['quality_per_dollar']:>11.0f}"
+        )
+    click.echo("=" * 105)
+    click.echo()
+
+
+@hardware.command(name="config")
+def hardware_config():
+    """Inspect active hardware controller configuration."""
+    from aeon.hardware.controller import global_hardware_controller
+    cfg = global_hardware_controller.config
+    dump_fn = getattr(cfg, "model_dump", cfg.dict)
+    click.echo(json.dumps(dump_fn(), indent=2))
+
+
+@hardware.command(name="break-even")
+def hardware_break_even():
+    """Compute and display Phase 8 economic break-even points."""
+    harness = BenchmarkHarness()
+    click.echo("\nComputing AEON Phase 8 Economic Break-Even Analysis...\n")
+    be = harness.run_hardware_break_even_analysis()
+    click.echo(json.dumps(be, indent=2))
+
+
+@hardware.command(name="overhead")
+def hardware_overhead():
+    """Measure AEON controller overhead for hardware & precision decision evaluation."""
+    harness = BenchmarkHarness()
+    click.echo("\nMeasuring Phase 8 Hardware Controller Latency Overhead...\n")
+    ov = harness.run_hardware_controller_overhead(iterations=100)
+    click.echo(json.dumps(ov, indent=2))
+
+
 if __name__ == "__main__":
     cli()
+
 

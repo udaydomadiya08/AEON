@@ -129,8 +129,45 @@ from aeon.depth.early_exit import EarlyExitEvaluator, global_early_exit_evaluato
 from aeon.depth.economics import DepthEconomics, global_depth_economics
 from aeon.depth.backend import BaseDepthBackend, SimulationDepthBackend, global_simulation_depth_backend, global_depth_backend
 
+from aeon.hardware.controller import HardwareController, global_hardware_controller
+from aeon.hardware.types import (
+    DeviceType,
+    PrecisionType,
+    QuantizationMethod,
+    CapabilityStatus,
+    ThermalPressure,
+    MemoryPressure,
+    ExecutionMode,
+    HardwareProfile,
+    PrecisionProfile,
+    QuantizationConfig,
+    QuantizationResult,
+    MemoryAssessment,
+    ThermalState,
+    EnergyEstimate,
+    HardwareCandidate,
+    HardwareDecision,
+    HardwareConfig,
+)
+from aeon.hardware.detector import HardwareDetector
+from aeon.hardware.profiles import (
+    APPLE_SILICON_M_PROFILE,
+    NVIDIA_A100_PROFILE,
+    NVIDIA_H100_PROFILE,
+    CPU_SERVER_PROFILE,
+    estimate_model_memory_mb,
+)
+from aeon.hardware.precision import PrecisionManager
+from aeon.hardware.quantization import QuantizationManager
+from aeon.hardware.capabilities import HardwareCapabilityMatrix
+from aeon.hardware.memory import HardwareMemoryManager
+from aeon.hardware.cost_model import HardwareCostModel
+from aeon.hardware.energy import EnergyEstimator
+from aeon.hardware.thermal import ThermalMonitor
+from aeon.hardware.backend import BaseHardwareBackend, SimulationHardwareBackend
 
-__version__ = "0.7.0"
+
+__version__ = "0.8.0"
 
 
 class AEON:
@@ -166,6 +203,15 @@ class AEON:
         max_depth: Optional[int] = None,
         min_depth: Optional[int] = None,
         depth_controller: Optional[DepthController] = None,
+        hardware_aware: bool = False,
+        hardware: bool = False,
+        preferred_device: Optional[str] = None,
+        preferred_precision: Optional[str] = None,
+        preferred_quantization: Optional[str] = None,
+        device: Optional[str] = None,
+        precision: Optional[str] = None,
+        quantization: Optional[str] = None,
+        hardware_controller: Optional[HardwareController] = None,
     ):
         self.registry = registry or global_registry
         self.backend = backend or SimulationBackend(self.registry)
@@ -180,6 +226,10 @@ class AEON:
         self.depth_strategy = depth_strategy
         self.max_depth = max_depth
         self.min_depth = min_depth
+        self.hardware_enabled = hardware_aware or hardware
+        self.preferred_device = device or preferred_device
+        self.preferred_precision = precision or preferred_precision
+        self.preferred_quantization = quantization or preferred_quantization
 
         # Initialize or assign memory hierarchy
         if memory_hierarchy is not None:
@@ -208,6 +258,9 @@ class AEON:
         # Initialize or assign depth controller
         self.depth_controller = depth_controller or global_depth_controller
 
+        # Initialize or assign hardware controller
+        self.hardware_controller = hardware_controller or global_hardware_controller
+
         self.voi_controller = DynamicStoppingController(
             backend=self.backend,
             registry=self.registry,
@@ -221,6 +274,8 @@ class AEON:
             reasoning_enabled=self.reasoning_enabled,
             depth_controller=self.depth_controller,
             depth_enabled=self.depth_enabled,
+            hardware_controller=self.hardware_controller,
+            hardware_enabled=self.hardware_enabled,
         )
         self.rules_controller = ComputeController(
             backend=self.backend,
@@ -235,6 +290,8 @@ class AEON:
             reasoning_enabled=self.reasoning_enabled,
             depth_controller=self.depth_controller,
             depth_enabled=self.depth_enabled,
+            hardware_controller=self.hardware_controller,
+            hardware_enabled=self.hardware_enabled,
         )
 
     @property
@@ -262,6 +319,11 @@ class AEON:
         """Access the adaptive model depth & Mixture-of-Depths controller."""
         return self.depth_controller
 
+    @property
+    def hardware(self) -> HardwareController:
+        """Access the hardware-aware precision & quantization controller."""
+        return self.hardware_controller
+
     def run(
         self,
         query: Union[str, InferenceRequest],
@@ -287,6 +349,12 @@ class AEON:
         depth_strategy: Optional[str] = None,
         max_depth: Optional[int] = None,
         min_depth: Optional[int] = None,
+        hardware_aware: Optional[bool] = None,
+        hardware: Optional[bool] = None,
+        device: Optional[str] = None,
+        precision: Optional[str] = None,
+        quantization: Optional[str] = None,
+        memory_budget_mb: Optional[float] = None,
     ) -> InferenceResult:
         """Run an inference request through the AEON economically-optimized engine."""
         # Parse budget dictionary if provided
@@ -303,6 +371,7 @@ class AEON:
         active_speculation = speculation if speculation is not None else self.speculation_enabled
         active_reasoning = reasoning if reasoning is not None else self.reasoning_enabled
         active_depth = adaptive_depth if adaptive_depth is not None else self.depth_enabled
+        active_hardware = (hardware_aware or hardware) if (hardware_aware is not None or hardware is not None) else self.hardware_enabled
 
         if isinstance(query, str):
             req = InferenceRequest(
@@ -330,6 +399,11 @@ class AEON:
                 depth_strategy=depth_strategy,
                 max_depth=max_depth,
                 min_depth=min_depth,
+                hardware_aware=active_hardware,
+                device=device or self.preferred_device,
+                precision=precision or self.preferred_precision,
+                quantization=quantization or self.preferred_quantization,
+                memory_budget_mb=memory_budget_mb,
             )
         else:
             req = query
@@ -371,6 +445,18 @@ class AEON:
                 req.reasoning_budget_tokens = reasoning_budget_tokens
             if reasoning_budget_cost and not req.reasoning_budget_cost:
                 req.reasoning_budget_cost = reasoning_budget_cost
+            if hardware_aware is not None or hardware is not None:
+                req.hardware_aware = hardware_aware or hardware
+            elif req.hardware_aware is None and self.hardware_enabled:
+                req.hardware_aware = True
+            if device and not req.device:
+                req.device = device
+            if precision and not req.precision:
+                req.precision = precision
+            if quantization and not req.quantization:
+                req.quantization = quantization
+            if memory_budget_mb and not req.memory_budget_mb:
+                req.memory_budget_mb = memory_budget_mb
             if require_verification is not None:
                 req.require_verification = require_verification
             if session_id and not req.session_id:
@@ -473,4 +559,69 @@ __all__ = [
     "ReasoningConfig",
     "ReasoningEconomics",
     "ReasoningStrategySelector",
+    # Phase 7 Adaptive Depth & MoD
+    "DepthController",
+    "global_depth_controller",
+    "DepthStrategy",
+    "DepthExitDecision",
+    "TokenImportanceSignal",
+    "ModelDepthProfile",
+    "TokenComputeState",
+    "DepthExecutionState",
+    "DepthCandidate",
+    "DepthConfig",
+    "ModelDepthRegistry",
+    "global_depth_registry",
+    "get_depth_profile",
+    "get_model_depth_profile",
+    "DepthCostModel",
+    "LayerCostModel",
+    "global_depth_cost_model",
+    "TokenImportanceEstimator",
+    "global_token_importance_estimator",
+    "CapacityController",
+    "global_capacity_controller",
+    "MoDRouter",
+    "global_mod_router",
+    "EarlyExitEvaluator",
+    "global_early_exit_evaluator",
+    "DepthEconomics",
+    "global_depth_economics",
+    "BaseDepthBackend",
+    "SimulationDepthBackend",
+    # Phase 8 Hardware & Quantization
+    "HardwareController",
+    "global_hardware_controller",
+    "DeviceType",
+    "PrecisionType",
+    "QuantizationMethod",
+    "CapabilityStatus",
+    "ThermalPressure",
+    "MemoryPressure",
+    "ExecutionMode",
+    "HardwareProfile",
+    "PrecisionProfile",
+    "QuantizationConfig",
+    "QuantizationResult",
+    "MemoryAssessment",
+    "ThermalState",
+    "EnergyEstimate",
+    "HardwareCandidate",
+    "HardwareDecision",
+    "HardwareConfig",
+    "HardwareDetector",
+    "APPLE_SILICON_M_PROFILE",
+    "NVIDIA_A100_PROFILE",
+    "NVIDIA_H100_PROFILE",
+    "CPU_SERVER_PROFILE",
+    "estimate_model_memory_mb",
+    "PrecisionManager",
+    "QuantizationManager",
+    "HardwareCapabilityMatrix",
+    "HardwareMemoryManager",
+    "HardwareCostModel",
+    "EnergyEstimator",
+    "ThermalMonitor",
+    "BaseHardwareBackend",
+    "SimulationHardwareBackend",
 ]

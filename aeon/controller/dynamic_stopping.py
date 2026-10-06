@@ -54,6 +54,8 @@ class DynamicStoppingController:
         reasoning_enabled: bool = False,
         depth_controller: Optional[Any] = None,
         depth_enabled: bool = False,
+        hardware_controller: Optional[Any] = None,
+        hardware_enabled: bool = False,
     ):
         self.registry = registry or global_registry
         self.backend = backend or SimulationBackend(self.registry)
@@ -69,6 +71,8 @@ class DynamicStoppingController:
         self.reasoning_enabled = reasoning_enabled
         self.depth_controller = depth_controller
         self.depth_enabled = depth_enabled
+        self.hardware_controller = hardware_controller
+        self.hardware_enabled = hardware_enabled
 
     def run(self, request: InferenceRequest) -> InferenceResult:
         request_id = f"aeon-{uuid.uuid4().hex[:10]}"
@@ -666,6 +670,24 @@ class DynamicStoppingController:
         cost_saved = mem_lookup.estimated_cost_saved_usd if (mem_lookup and reused_prefix_tokens > 0) else 0.0
         lookup_lat = mem_lookup.lookup_latency_ms if mem_lookup else 0.0
 
+        # Check Hardware Optimization (Phase 8 — Hardware, Device, Precision & Quantization)
+        hw_active = (request.hardware_aware is True or (request.hardware_aware is None and self.hardware_enabled)) and self.hardware_controller is not None
+        hw_dec = None
+        if hw_active:
+            hw_dec = self.hardware_controller.evaluate_and_select(
+                query=request.query,
+                model_name=state.current_model,
+                difficulty=state.difficulty,
+                uncertainty=state.uncertainty,
+                sla_latency_ms=request.sla_latency_ms,
+                cost_budget_usd=request.cost_budget_usd,
+                memory_budget_mb=request.memory_budget_mb,
+                target_quality=request.target_quality,
+                preferred_device=request.device,
+                preferred_precision=request.precision,
+                preferred_quantization=request.quantization,
+            )
+
         telemetry = Telemetry(
             request_id=request_id,
             task_type=state.task_type.value,
@@ -785,6 +807,28 @@ class DynamicStoppingController:
             depth_estimated_flops=last_depth_tel.get("depth_estimated_flops", 0.0) if last_depth_tel else 0.0,
             depth_controller_overhead_ms=last_depth_tel.get("depth_controller_overhead_ms", 0.0) if last_depth_tel else 0.0,
             depth_execution_mode=last_depth_tel.get("depth_execution_mode", "SIMULATED_DEPTH_EXECUTION") if last_depth_tel else "SIMULATED_DEPTH_EXECUTION",
+            # Phase 8 Hardware Telemetry
+            hardware_enabled=hw_active,
+            hardware_profile_id=self.hardware_controller.profile.profile_id if (hw_active and self.hardware_controller) else None,
+            hardware_device=hw_dec.device.value if hw_dec else None,
+            hardware_accelerator=self.hardware_controller.profile.accelerator_name if (hw_active and self.hardware_controller) else None,
+            precision_requested=request.precision,
+            precision_selected=hw_dec.precision.value if hw_dec else "FP32",
+            quantization_requested=request.quantization,
+            quantization_selected=hw_dec.quantization.value if hw_dec else "none",
+            quantization_status=hw_dec.quantization.value if hw_dec else "none",
+            memory_total_mb=self.hardware_controller.profile.ram_total_mb if (hw_active and self.hardware_controller) else 0.0,
+            memory_available_mb=self.hardware_controller.profile.ram_available_mb if (hw_active and self.hardware_controller) else 0.0,
+            memory_estimated_mb=hw_dec.memory_mb if hw_dec else 0.0,
+            memory_pressure_level=self.hardware_controller.profile.memory_pressure.value if (hw_active and self.hardware_controller) else "NORMAL",
+            thermal_state=self.hardware_controller.profile.thermal_pressure.value if (hw_active and self.hardware_controller) else "NOMINAL",
+            energy_joules=hw_dec.energy_joules if hw_dec else 0.0,
+            energy_status=hw_dec.execution_mode.value if hw_dec else "ESTIMATED",
+            hardware_utility=hw_dec.utility if hw_dec else 0.0,
+            hardware_controller_overhead_ms=hw_dec.provenance.get("controller_overhead_ms", 0.0) if hw_dec else 0.0,
+            hardware_execution_mode=hw_dec.execution_mode.value if hw_dec else "MEASURED",
+            hardware_decision_reason=hw_dec.decision_reason if hw_dec else None,
+            hardware_fallbacks=hw_dec.fallbacks_triggered if hw_dec else [],
         )
 
         final_plan = ExecutionPlan(
@@ -799,6 +843,10 @@ class DynamicStoppingController:
             max_compute=1.0,
             verification=(escalations > 0),
             stop_policy="value_of_compute",
+            hardware_device=hw_dec.device.value if hw_dec else None,
+            precision=hw_dec.precision.value if hw_dec else None,
+            quantization=hw_dec.quantization.value if hw_dec else None,
+            hardware_execution_mode=hw_dec.execution_mode.value if hw_dec else None,
         )
 
         return InferenceResult(

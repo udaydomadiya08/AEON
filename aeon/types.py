@@ -360,6 +360,33 @@ class Telemetry(BaseModel):
     depth_controller_overhead_ms: float = 0.0
     depth_execution_mode: str = "SIMULATED_DEPTH_EXECUTION"
 
+    # Phase 8 Hardware, Device, Precision & Quantization Telemetry
+    hardware_enabled: bool = False
+    hardware_device: Optional[str] = None
+    hardware_accelerator: Optional[str] = None
+    precision_requested: Optional[str] = None
+    precision_selected: Optional[str] = None
+    quantization_requested: Optional[str] = None
+    quantization_selected: Optional[str] = None
+    quantization_status: Optional[str] = None
+    memory_total_mb: float = 0.0
+    memory_available_mb: float = 0.0
+    memory_estimated_mb: float = 0.0
+    memory_pressure_level: str = "NORMAL"
+    thermal_state: str = "NOMINAL"
+    energy_joules: float = 0.0
+    energy_status: str = "ESTIMATED"
+    hardware_utility: float = 0.0
+    hardware_controller_overhead_ms: float = 0.0
+    hardware_execution_mode: str = "MEASURED"
+    hardware_profile_id: Optional[str] = None
+    hardware_decision_reason: Optional[str] = None
+    hardware_fallbacks: List[str] = Field(default_factory=list)
+
+    @property
+    def selected_precision(self) -> Optional[str]:
+        return self.precision_selected
+
 
 class ComputeState(BaseModel):
     """
@@ -444,6 +471,12 @@ class InferenceRequest(BaseModel):
     min_depth: Optional[int] = None
     enable_early_exit: Optional[bool] = None
     enable_mod: Optional[bool] = None
+    # Phase 8 Hardware & Precision Request Options
+    hardware_aware: Optional[bool] = None
+    device: Optional[str] = None
+    precision: Optional[str] = None
+    quantization: Optional[str] = None
+    memory_budget_mb: Optional[float] = None
 
 
 class ExecutionPlan(BaseModel):
@@ -474,6 +507,11 @@ class ExecutionPlan(BaseModel):
     allocated_depth: int = 0
     total_model_layers: int = 0
     mod_capacity: float = 1.0
+    # Phase 8 Hardware & Precision Plan Fields
+    hardware_device: Optional[str] = None
+    precision: Optional[str] = None
+    quantization: Optional[str] = None
+    hardware_execution_mode: Optional[str] = None
 
 
 class InferenceResult(BaseModel):
@@ -486,3 +524,11 @@ class InferenceResult(BaseModel):
     confidence: float
     trace: Telemetry
     plan: Optional[ExecutionPlan] = None
+
+    @property
+    def response(self) -> str:
+        return self.answer
+
+    @property
+    def telemetry(self) -> Telemetry:
+        return self.trace

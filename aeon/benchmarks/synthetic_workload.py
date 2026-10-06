@@ -539,4 +539,36 @@ def generate_phase7_depth_workload() -> Dict[str, List[InferenceRequest]]:
     }
 
 
+def generate_phase8_hardware_workload() -> Dict[str, List[InferenceRequest]]:
+    """
+    Generates balanced test workloads for Phase 8 Hardware & Quantization benchmarks.
+    Spans memory-heavy, latency-critical, precision-sensitive, and quantization-tolerant tasks.
+    """
+    return {
+        "precision_sensitive": [
+            InferenceRequest(query="Prove that the square root of 2 is irrational using proof by contradiction.", ground_truth="Irrational", task_hint="reasoning", require_verification=True, hardware_aware=True),
+            InferenceRequest(query="Construct a formal truth table proof showing that (P -> Q) is equivalent to (~P v Q).", ground_truth="Equivalent", task_hint="reasoning", require_verification=True, hardware_aware=True),
+            InferenceRequest(query="Analyze the consistency of Zermelo-Fraenkel set theory without the Axiom of Choice and discuss Godel's second incompleteness theorem.", ground_truth="Consistent relative to ZFC", task_hint="reasoning", hardware_aware=True),
+        ],
+        "quantization_tolerant": [
+            InferenceRequest(query="Hi, how are you today?", ground_truth="greeting", task_hint="conversational", hardware_aware=True),
+            InferenceRequest(query="Classify sentiment: 'The battery life is exceptional and camera is decent.'", ground_truth="positive", task_hint="classification", hardware_aware=True),
+            InferenceRequest(query="Summarize: Artificial Intelligence in medicine is transforming early diagnostics and clinical trial matching.", ground_truth="AI in medicine", task_hint="extraction", hardware_aware=True),
+        ],
+        "latency_critical": [
+            InferenceRequest(query="Quick check: What is the capital of France?", ground_truth="Paris", task_hint="factual", sla_latency_ms=100.0, hardware_aware=True),
+            InferenceRequest(query="Classify intent: 'Book an appointment for tomorrow 3pm'", ground_truth="booking", task_hint="classification", sla_latency_ms=120.0, hardware_aware=True),
+            InferenceRequest(query="Is 8721 divisible by 3?", ground_truth="Yes", task_hint="arithmetic", sla_latency_ms=150.0, hardware_aware=True),
+        ],
+        "memory_constrained": [
+            InferenceRequest(query="Execute large model reasoning on general relativity and frame dragging around rotating Kerr black holes.", ground_truth="Kerr metric", task_hint="reasoning", memory_budget_mb=4096.0, hardware_aware=True),
+            InferenceRequest(query="Solve a multi-variable calculus optimization problem with 4 constraints under tight memory headroom.", ground_truth="Lagrange multipliers", task_hint="reasoning", memory_budget_mb=2048.0, hardware_aware=True),
+        ],
+        "tool_assisted": [
+            InferenceRequest(query="Calculate: 125 * 37 and verify deterministically.", ground_truth="4625", task_hint="arithmetic", tools=True, hardware_aware=True),
+            InferenceRequest(query="Compute compound annual growth rate for revenue growing from 100M to 250M over 5 years.", ground_truth="CAGR ~20.11%", task_hint="arithmetic", tools=True, hardware_aware=True),
+        ],
+    }
+
+
 
