@@ -69,14 +69,15 @@ def aggregate_trials_to_result(
     mean_depth = float(np.mean(depths))
     mean_overhead = float(np.mean(overheads))
 
-    # Efficiency ratios with zero division guards
-    safe_cost = mean_cost if mean_cost > 1e-9 else 1e-6
+    rounded_quality = round(quality, 4)
+    rounded_cost = round(mean_cost, 7)
+    safe_cost = rounded_cost if rounded_cost > 1e-9 else 1e-6
     safe_lat_s = (mean_lat / 1000.0) if mean_lat > 1e-6 else 0.001
     safe_tflops = (mean_flops / 1e12) if mean_flops > 1e6 else 0.001
 
-    quality_per_dollar = round(quality / safe_cost, 2)
-    quality_per_second = round(quality / safe_lat_s, 2)
-    quality_per_tflops = round(quality / safe_tflops, 2)
+    quality_per_dollar = round(rounded_quality / safe_cost, 2)
+    quality_per_second = round(rounded_quality / safe_lat_s, 2)
+    quality_per_tflops = round(rounded_quality / safe_tflops, 2)
     overhead_pct = round((mean_overhead / max(0.001, mean_lat)) * 100.0, 2)
 
     # Statistical summaries
