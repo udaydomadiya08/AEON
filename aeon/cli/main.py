@@ -34,13 +34,16 @@ def cli():
 @click.option("--speculate", is_flag=True, default=False, help="Enable AEON speculative and token-efficient inference (Phase 5)")
 @click.option("--spec-strategy", default=None, type=click.Choice(["standard", "draft_model", "ngram", "multi_token"]), help="Force specific speculation strategy")
 @click.option("--draft-model", default=None, type=str, help="Specific draft model name to deploy")
-@click.option("--trace", is_flag=True, help="Display detailed step-by-step controller VOI, memory, and tool trace")
-def run(query: str, context: str, sla: float, budget: float, policy: str, cascade: bool, target_quality: float, memory: bool, memory_policy: str, tools: bool, speculate: bool, spec_strategy: str, draft_model: str, trace: bool):
+@click.option("--reasoning", is_flag=True, default=False, help="Enable AEON adaptive latent & token-efficient reasoning (Phase 6)")
+@click.option("--reason-strategy", default=None, type=click.Choice(["none", "direct", "shallow", "medium", "deep", "latent", "explicit", "tool_assisted", "model_escalation", "hybrid"]), help="Force specific reasoning strategy")
+@click.option("--trace", is_flag=True, help="Display detailed step-by-step controller VOI, memory, tool, and reasoning trace")
+def run(query: str, context: str, sla: float, budget: float, policy: str, cascade: bool, target_quality: float, memory: bool, memory_policy: str, tools: bool, speculate: bool, spec_strategy: str, draft_model: str, reasoning: bool, reason_strategy: str, trace: bool):
     """Run inference on a query with AEON adaptive compute optimization."""
     chosen_policy = "cascade" if cascade else policy
     from aeon.memory.hierarchy import global_memory_hierarchy
     from aeon.tools.tool_controller import global_tool_controller
     from aeon.speculation.controller import global_speculation_controller
+    from aeon.reasoning.controller import global_reasoning_controller
     aeon = AEON(
         policy=chosen_policy,
         memory=memory,
@@ -50,6 +53,8 @@ def run(query: str, context: str, sla: float, budget: float, policy: str, cascad
         tool_controller=global_tool_controller,
         speculation=speculate,
         speculation_controller=global_speculation_controller,
+        reasoning=reasoning,
+        reasoning_controller=global_reasoning_controller,
     )
     result = aeon.run(
         query=query,
@@ -62,6 +67,8 @@ def run(query: str, context: str, sla: float, budget: float, policy: str, cascad
         speculation=speculate,
         speculation_strategy=spec_strategy,
         draft_model=draft_model,
+        reasoning=reasoning,
+        reasoning_strategy=reason_strategy,
     )
 
     if trace:
@@ -108,6 +115,20 @@ def run(query: str, context: str, sla: float, budget: float, policy: str, cascad
             click.echo(f"Break-Even Rate:   {result.trace.break_even_acceptance*100:.1f}%")
             click.echo(f"Execution Mode:    {result.trace.speculation_mode}")
             click.echo("────────────────────────────────────────────────────")
+
+        if reasoning or result.trace.reasoning_enabled:
+            click.echo("\n──────────── AEON ADAPTIVE REASONING ────────────")
+            click.echo(f"Strategy:          {result.trace.reasoning_strategy or 'none'}")
+            click.echo(f"Model:             {result.trace.reasoning_model or result.trace.model}")
+            click.echo(f"Steps:             {result.trace.reasoning_depth_steps} (Latent: {result.trace.reasoning_latent_steps}, Explicit: {result.trace.reasoning_explicit_tokens} tokens)")
+            click.echo(f"Quality Est:       {result.trace.reasoning_quality_estimate:.2f} | Uncertainty: {result.trace.reasoning_uncertainty:.2f}")
+            click.echo(f"Marginal Gain:     +{result.trace.reasoning_marginal_gain:.4f} | Marginal Cost: ${result.trace.reasoning_marginal_cost_usd:.6f}")
+            click.echo(f"VOI Ratio:         {result.trace.reasoning_voi:.2f}")
+            click.echo(f"Stop Reason:       {result.trace.reasoning_stop_reason or 'NONE'}")
+            click.echo(f"Budget Tokens:     {result.trace.reasoning_budget_tokens_used}/{result.trace.reasoning_budget_tokens_max}")
+            click.echo(f"Answer Stable:     {result.trace.reasoning_answer_stable}")
+            click.echo(f"Execution Mode:    {result.trace.reasoning_execution_mode}")
+            click.echo("─────────────────────────────────────────────────")
 
         if result.trace.trace_steps:
             click.echo("\n────────────── COMPUTE CONTROLLER ──────────────")
@@ -649,6 +670,84 @@ def speculation_break_even():
     harness = BenchmarkHarness()
     res = harness.run_speculation_break_even_experiment()
     click.echo(json.dumps(res, indent=2))
+
+
+# =========================================================================
+# Phase 6 Adaptive Reasoning Commands
+# =========================================================================
+
+@cli.group()
+def reasoning():
+    """AEON Adaptive Latent & Token-Efficient Reasoning Controller (Phase 6)."""
+    pass
+
+
+@reasoning.command(name="benchmark")
+def reasoning_benchmark():
+    """Run dedicated Phase 6 adaptive reasoning benchmark suite."""
+    harness = BenchmarkHarness()
+    click.echo("\nRunning AEON Phase 6 Adaptive Reasoning Benchmark Suite...\n")
+    results = harness.run_phase6()
+    click.echo("=" * 115)
+    click.echo(
+        f"{'Configuration':<32} | {'Quality':<7} | {'Latency':<9} | {'Cost ($)':<10} | {'Tokens':<8} | {'Quality/$':<11} | {'Quality/TFLOP':<13}"
+    )
+    click.echo("=" * 115)
+    for name, m in results.items():
+        lat_str = f"{m.mean_latency_ms:.1f}ms"
+        cost_str = f"${m.total_cost_usd:.5f}"
+        click.echo(
+            f"{name:<32} | {m.accuracy*100:>6.1f}% | {lat_str:>9} | {cost_str:>10} | {m.total_tokens:>8} | {m.quality_per_dollar:>11.0f} | {m.quality_per_tflops:>13.4f}"
+        )
+    click.echo("=" * 115)
+    click.echo()
+
+
+@reasoning.command(name="compare")
+def reasoning_compare():
+    """Compare reasoning performance across all 6 workload modalities."""
+    harness = BenchmarkHarness()
+    click.echo("\nRunning Phase 6 Reasoning Workload Breakdown (6 Modalities)...\n")
+    res = harness.run_reasoning_workload_breakdown()
+    click.echo("=" * 105)
+    click.echo(
+        f"{'Modality':<22} | {'Direct Latency':<15} | {'Heavy Cost':<14} | {'Adaptive Cost':<15} | {'Savings':<9} | {'Selected'}"
+    )
+    click.echo("=" * 105)
+    for cat, d in res.items():
+        click.echo(
+            f"{cat:<22} | {d['mean_no_reason_latency_ms']:>12.1f}ms | ${d['mean_heavy_cost_usd']:>12.6f} | ${d['mean_adaptive_cost_usd']:>13.6f} | {d['cost_savings_vs_heavy']:>7.1f}% | {d['preferred_strategy']}"
+        )
+    click.echo("=" * 105)
+    click.echo()
+
+
+@reasoning.command(name="ablation")
+def reasoning_ablation():
+    """Run Phase 6 component ablation study."""
+    harness = BenchmarkHarness()
+    click.echo("\nRunning Phase 6 Reasoning Component Ablation Study...\n")
+    res = harness.run_reasoning_ablation_study()
+    click.echo("=" * 105)
+    click.echo(
+        f"{'Ablation Variant':<30} | {'Quality':<8} | {'Latency':<10} | {'Cost':<12} | {'Tokens':<8} | {'Quality/$':<11}"
+    )
+    click.echo("=" * 105)
+    for name, d in res.items():
+        click.echo(
+            f"{name:<30} | {d['quality']*100:>6.1f}% | {d['mean_latency_ms']:>8.1f}ms | ${d['mean_cost_usd']:>10.6f} | {d['mean_reasoning_tokens']:>8.1f} | {d['quality_per_dollar']:>11.0f}"
+        )
+    click.echo("=" * 105)
+    click.echo()
+
+
+@reasoning.command(name="config")
+def reasoning_config():
+    """Inspect active adaptive reasoning configuration."""
+    from aeon.reasoning.controller import global_reasoning_controller
+    cfg = global_reasoning_controller.config
+    dump_fn = getattr(cfg, "model_dump", cfg.dict)
+    click.echo(json.dumps(dump_fn(), indent=2))
 
 
 if __name__ == "__main__":

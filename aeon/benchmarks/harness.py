@@ -1062,5 +1062,156 @@ class BenchmarkHarness:
             }
         return out
 
+    def run_phase6(self) -> Dict[str, AggregateMetrics]:
+        """
+        Phase 6 Comparative Benchmark.
+        Evaluates Direct Generation vs Fixed Heavy Reasoning vs AEON Adaptive Reasoning.
+        """
+        from aeon.benchmarks.synthetic_workload import generate_phase6_reasoning_workload
+        from aeon import AEON
+
+        wl_dict = generate_phase6_reasoning_workload()
+        workload = []
+        for cat_queries in wl_dict.values():
+            workload.extend(cat_queries)
+
+        results: Dict[str, AggregateMetrics] = {}
+
+        # 1. No Reasoning (Direct Generation)
+        aeon_none = AEON(policy="rules", memory=False, tools=False, reasoning=False)
+        traces_none = []
+        for r in workload:
+            req = r.model_copy(deep=True)
+            req.reasoning = False
+            res = aeon_none.run(req)
+            traces_none.append(res.trace)
+        results["1. No Reasoning (Direct)"] = calculate_aggregate_metrics("1. No Reasoning (Direct)", traces_none)
+
+        # 2. Fixed Heavy Reasoning (Always forces deep explicit reasoning tokens)
+        aeon_heavy = AEON(policy="rules", memory=False, tools=False, reasoning=True)
+        traces_heavy = []
+        for r in workload:
+            req = r.model_copy(deep=True)
+            req.reasoning = True
+            req.reasoning_strategy = "explicit"
+            res = aeon_heavy.run(req)
+            traces_heavy.append(res.trace)
+        results["2. Fixed Heavy Reasoning"] = calculate_aggregate_metrics("2. Fixed Heavy Reasoning", traces_heavy)
+
+        # 3. AEON Adaptive Reasoning (VOI controller dynamically optimizes reasoning depth and tokens)
+        aeon_adaptive = AEON(policy="voi", memory=True, tools=True, reasoning=True)
+        traces_adaptive = []
+        for r in workload:
+            req = r.model_copy(deep=True)
+            req.reasoning = True
+            res = aeon_adaptive.run(req)
+            traces_adaptive.append(res.trace)
+        results["3. AEON Adaptive Reasoning"] = calculate_aggregate_metrics("3. AEON Adaptive Reasoning", traces_adaptive)
+
+        return results
+
+    def run_reasoning_ablation_study(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Phase 6 Reasoning Component Ablation Study.
+        Measures the distinct contribution of each adaptive reasoning component.
+        """
+        from aeon.benchmarks.synthetic_workload import generate_phase6_reasoning_workload
+        from aeon.reasoning.controller import ReasoningController
+        from aeon.reasoning.types import ReasoningConfig, ReasoningStrategy
+        from aeon import AEON
+
+        wl_dict = generate_phase6_reasoning_workload()
+        workload = []
+        for cat_queries in wl_dict.values():
+            workload.extend(cat_queries)
+
+        ablations = [
+            ("Full AEON Adaptive", ReasoningConfig(enabled=True)),
+            ("No Reasoning", ReasoningConfig(enabled=False)),
+            ("Explicit Only (No Latent)", ReasoningConfig(enabled=True, allow_latent=False)),
+            ("Without Early Stopping", ReasoningConfig(enabled=True, early_stopping_enabled=False)),
+            ("Fixed Deep Steps (No VOI)", ReasoningConfig(enabled=True, min_reasoning_steps=6, max_reasoning_steps=6)),
+        ]
+
+        out: Dict[str, Dict[str, Any]] = {}
+        for name, cfg in ablations:
+            ctrl = ReasoningController(config=cfg)
+            aeon = AEON(policy="voi", memory=True, tools=True, reasoning=True, reasoning_controller=ctrl)
+            traces = []
+            for r in workload:
+                req = r.model_copy(deep=True)
+                req.reasoning = True
+                res = aeon.run(req)
+                traces.append(res.trace)
+            agg = calculate_aggregate_metrics(name, traces)
+            mean_tokens = sum(t.reasoning_tokens for t in traces) / float(len(traces))
+            out[name] = {
+                "quality": agg.accuracy,
+                "mean_latency_ms": agg.mean_latency_ms,
+                "mean_cost_usd": agg.mean_cost_usd,
+                "mean_reasoning_tokens": round(mean_tokens, 1),
+                "quality_per_dollar": agg.quality_per_dollar,
+                "quality_per_tflops": agg.quality_per_tflops,
+            }
+        return out
+
+    def run_reasoning_workload_breakdown(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Phase 6 Workload-Specific Reasoning Breakdown across all 6 modalities.
+        """
+        from aeon.benchmarks.synthetic_workload import generate_phase6_reasoning_workload
+        from aeon import AEON
+
+        wl_dict = generate_phase6_reasoning_workload()
+        out = {}
+
+        aeon_none = AEON(policy="rules", memory=False, tools=False, reasoning=False)
+        aeon_heavy = AEON(policy="rules", memory=False, tools=False, reasoning=True)
+        aeon_adaptive = AEON(policy="voi", memory=True, tools=True, reasoning=True)
+
+        for cat, queries in wl_dict.items():
+            # Direct
+            none_lat = []
+            for q in queries:
+                r = q.model_copy(deep=True)
+                r.reasoning = False
+                res = aeon_none.run(r)
+                none_lat.append(res.latency_ms)
+            mean_none_lat = sum(none_lat) / float(len(none_lat))
+
+            # Heavy
+            heavy_cost = []
+            for q in queries:
+                r = q.model_copy(deep=True)
+                r.reasoning = True
+                r.reasoning_strategy = "explicit"
+                res = aeon_heavy.run(r)
+                heavy_cost.append(res.cost)
+            mean_heavy_cost = sum(heavy_cost) / float(len(heavy_cost))
+
+            # Adaptive
+            adaptive_cost = []
+            adaptive_tokens = []
+            strats_chosen = []
+            for q in queries:
+                r = q.model_copy(deep=True)
+                r.reasoning = True
+                res = aeon_adaptive.run(r)
+                adaptive_cost.append(res.cost)
+                adaptive_tokens.append(res.trace.reasoning_tokens)
+                strats_chosen.append(res.trace.reasoning_strategy or "none")
+            mean_adaptive_cost = sum(adaptive_cost) / float(len(adaptive_cost))
+            mean_adaptive_tokens = sum(adaptive_tokens) / float(len(adaptive_tokens))
+
+            out[cat] = {
+                "mean_no_reason_latency_ms": round(mean_none_lat, 2),
+                "mean_heavy_cost_usd": round(mean_heavy_cost, 7),
+                "mean_adaptive_cost_usd": round(mean_adaptive_cost, 7),
+                "mean_reasoning_tokens": round(mean_adaptive_tokens, 1),
+                "cost_savings_vs_heavy": round((1.0 - mean_adaptive_cost / max(1e-7, mean_heavy_cost)) * 100, 1),
+                "preferred_strategy": max(set(strats_chosen), key=strats_chosen.count),
+            }
+        return out
+
 
 

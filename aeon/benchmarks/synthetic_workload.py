@@ -420,3 +420,46 @@ def generate_phase5_speculation_workload() -> Dict[str, List[InferenceRequest]]:
     }
 
 
+def generate_phase6_reasoning_workload() -> Dict[str, List[InferenceRequest]]:
+    """
+    AEON Phase 6 — Adaptive Latent & Token-Efficient Reasoning Workload Suite.
+    Categorizes tasks across 6 distinct computational reasoning modalities:
+    1. No Reasoning (Direct Lookup / Classification)
+    2. Shallow Reasoning (Simple Deductions, 1-2 Steps)
+    3. Medium Reasoning (Multi-Step Logic & Optimization)
+    4. Deep Reasoning (Formal Proofs, Combinatorial Logic, Adversarial Riddles)
+    5. Tool-Assisted Reasoning (Hybrid Symbolic/Deterministic Verification)
+    6. Budget-Constrained Reasoning (Tight Latency/Cost SLAs Testing Early Termination)
+    """
+    return {
+        "no_reasoning": [
+            InferenceRequest(query="Classify sentiment: 'This product exceeded all my expectations!'", ground_truth="positive", task_hint="classification", reasoning=True),
+            InferenceRequest(query="What is the capital city of France?", ground_truth="Paris", task_hint="factual", reasoning=True),
+            InferenceRequest(query="Extract the date from: Meeting confirmed for October 14, 2026 at 2 PM.", ground_truth="October 14, 2026", task_hint="extraction", reasoning=True),
+        ],
+        "shallow_reasoning": [
+            InferenceRequest(query="If Alice is older than Bob, and Bob is older than Charlie, is Alice older than Charlie?", ground_truth="Yes", task_hint="reasoning", reasoning=True),
+            InferenceRequest(query="A train leaves at 3:15 PM and arrives at 4:45 PM. How many minutes did the journey take?", ground_truth="90", task_hint="reasoning", reasoning=True),
+            InferenceRequest(query="If all roses are flowers and all flowers need sunlight, do roses need sunlight?", ground_truth="Yes", task_hint="reasoning", reasoning=True),
+        ],
+        "medium_reasoning": [
+            InferenceRequest(query="Determine whether a graph with vertices {A, B, C, D} and edges (A,B), (B,C), (C,D), (D,A) is bipartite.", ground_truth="Yes, it is bipartite", task_hint="reasoning", reasoning=True),
+            InferenceRequest(query="Optimize schedule: Job A takes 3h, Job B takes 2h, Job C takes 4h. Job C depends on A and B. What is the minimum completion time with 2 workers?", ground_truth="7 hours", task_hint="reasoning", reasoning=True),
+            InferenceRequest(query="Given two sorted arrays of size m and n, analyze the time complexity of finding the median in O(log(min(m, n))).", ground_truth="O(log(min(m, n)))", task_hint="reasoning", reasoning=True),
+        ],
+        "deep_reasoning": [
+            InferenceRequest(query="Construct a formal deductive proof that there are infinitely many prime numbers using Euclid's construction.", ground_truth="Infinitely many primes proof", task_hint="reasoning", reasoning=True),
+            InferenceRequest(query="Solve this logic puzzle: Three inhabitants A, B, and C on the Island of Knights and Knaves. A says 'B is a knave'. B says 'A and C are of the same type'. What is C?", ground_truth="C is a knight", task_hint="reasoning", reasoning=True),
+            InferenceRequest(query="Analyze whether the Halting Problem can be solved for a Turing machine with bounded tape length L in finite time.", ground_truth="Decidable in finite time because states are finite", task_hint="reasoning", reasoning=True),
+        ],
+        "tool_assisted": [
+            InferenceRequest(query="Calculate exactly: 47291 * 83921 + 94812 / 12 and verify deterministically.", ground_truth="3968708911", task_hint="arithmetic", tools=True, reasoning=True),
+            InferenceRequest(query="Solve symbolic system: 3*x + 4*y = 25 and 2*x - y = 9 for (x, y).", ground_truth="x=5.545, y=2.09", task_hint="symbolic_math", tools=True, reasoning=True),
+        ],
+        "budget_constrained": [
+            InferenceRequest(query="Evaluate whether P vs NP can be settled by relativizing techniques, under tight budget constraint.", task_hint="reasoning", sla_latency_ms=150.0, cost_budget_usd=0.0005, reasoning=True),
+            InferenceRequest(query="Find the optimal Nash equilibrium in a complex 5-player non-zero-sum game under 100ms SLA.", task_hint="reasoning", sla_latency_ms=100.0, cost_budget_usd=0.0002, reasoning=True),
+        ],
+    }
+
+

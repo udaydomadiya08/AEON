@@ -50,6 +50,8 @@ class DynamicStoppingController:
         tools_enabled: bool = False,
         speculation_controller: Optional[Any] = None,
         speculation_enabled: bool = False,
+        reasoning_controller: Optional[Any] = None,
+        reasoning_enabled: bool = False,
     ):
         self.registry = registry or global_registry
         self.backend = backend or SimulationBackend(self.registry)
@@ -61,9 +63,12 @@ class DynamicStoppingController:
         self.tools_enabled = tools_enabled
         self.speculation_controller = speculation_controller
         self.speculation_enabled = speculation_enabled
+        self.reasoning_controller = reasoning_controller
+        self.reasoning_enabled = reasoning_enabled
 
     def run(self, request: InferenceRequest) -> InferenceResult:
         request_id = f"aeon-{uuid.uuid4().hex[:10]}"
+        last_reason_tel: Optional[Dict[str, Any]] = None
         
         # 1. Initial task classification & difficulty analysis
         task_type, difficulty, level, uncertainty = self.classifier.classify(request.query)
@@ -430,6 +435,34 @@ class DynamicStoppingController:
                 }
             else:
                 res = self.backend.generate(request, plan)
+
+            # Reasoning Enhancement (Phase 6) — Apply adaptive reasoning after initial generation
+            reasoning_enabled = request.reasoning is True or (request.reasoning is None and self.reasoning_enabled)
+            if reasoning_enabled and self.reasoning_controller is not None and plan.route != RouteChoice.DECISION_MODEL:
+                from aeon.reasoning.types import ReasoningStrategy
+                preferred_strat = ReasoningStrategy(request.reasoning_strategy) if request.reasoning_strategy else None
+                reason_ans, reason_state, reason_tel = self.reasoning_controller.execute_reasoning(
+                    query=request.query,
+                    context=request.context,
+                    task_type=state.task_type.value,
+                    difficulty=state.difficulty,
+                    uncertainty=state.uncertainty,
+                    model=state.current_model,
+                    cost_budget_usd=max(0.0001, (state.remaining_cost_budget or 0.005) * 0.5),
+                    latency_budget_ms=max(100.0, (state.remaining_latency_ms or 5000.0) * 0.5),
+                    target_confidence=budget_cfg.target_quality,
+                    preferred_strategy=preferred_strat,
+                )
+                last_reason_tel = reason_tel
+                # If reasoning produced a confident answer, use it
+                if reason_state.confidence > float(res.get("confidence", 0.50)):
+                    res["answer"] = reason_ans
+                    res["confidence"] = reason_state.confidence
+                    res["reasoning_tokens"] = reason_state.reasoning_tokens
+                    res["estimated_cost"] = float(res.get("estimated_cost", 0.0)) + reason_tel.get("budget_cost_used", 0.0)
+                    res["latency_ms"] = float(res.get("latency_ms", 0.0)) + reason_tel.get("budget_latency_used", 0.0)
+                    res["compute_estimate"] = float(res.get("compute_estimate", 0.0)) + reason_tel.get("budget_compute_used", 0.0)
+
             latest_answer = res.get("answer", "")
             latest_correct = res.get("correct")
             step_confidence = float(res.get("confidence", 0.80))
@@ -642,6 +675,24 @@ class DynamicStoppingController:
             energy_saved_joules=round((lat_saved / 1000.0) * 25.0, 4),
             lookup_latency_ms=round(lookup_lat, 2),
             reuse_decision=mem_lookup.reuse_decision.value if mem_lookup else None,
+            # Phase 6 Reasoning Telemetry
+            reasoning_enabled=last_reason_tel is not None,
+            reasoning_strategy=last_reason_tel.get("reasoning_strategy") if last_reason_tel else None,
+            reasoning_model=last_reason_tel.get("reasoning_model") if last_reason_tel else None,
+            reasoning_depth_steps=last_reason_tel.get("reasoning_steps", 0) if last_reason_tel else 0,
+            reasoning_latent_steps=last_reason_tel.get("latent_steps", 0) if last_reason_tel else 0,
+            reasoning_explicit_tokens=last_reason_tel.get("explicit_tokens", 0) if last_reason_tel else 0,
+            reasoning_quality_estimate=round(last_reason_tel.get("quality_estimate", 0.0), 4) if last_reason_tel else 0.0,
+            reasoning_uncertainty=round(last_reason_tel.get("uncertainty", 0.0), 4) if last_reason_tel else 0.0,
+            reasoning_voi=round(last_reason_tel.get("voi", 0.0), 2) if last_reason_tel else 0.0,
+            reasoning_stop_reason=last_reason_tel.get("stop_reason") if last_reason_tel else None,
+            reasoning_budget_tokens_used=last_reason_tel.get("budget_tokens_used", 0) if last_reason_tel else 0,
+            reasoning_budget_tokens_max=last_reason_tel.get("budget_tokens_max", 0) if last_reason_tel else 0,
+            reasoning_answer_stable=last_reason_tel.get("answer_stable", False) if last_reason_tel else False,
+            reasoning_stagnation_detected=last_reason_tel.get("stagnation_detected", False) if last_reason_tel else False,
+            reasoning_confidence_trace=last_reason_tel.get("confidence_trace", []) if last_reason_tel else [],
+            reasoning_action_trace=last_reason_tel.get("action_trace", []) if last_reason_tel else [],
+            reasoning_execution_mode=last_reason_tel.get("execution_mode", "SIMULATED_LATENT_REASONING") if last_reason_tel else "SIMULATED_LATENT_REASONING",
         )
 
         final_plan = ExecutionPlan(

@@ -94,7 +94,21 @@ from aeon.speculation.ngram import NgramSpeculationEngine
 from aeon.speculation.verifier import SpeculationVerifier
 from aeon.speculation.strategies import SpeculativeStrategySelector
 
-__version__ = "0.5.0"
+from aeon.reasoning.controller import ReasoningController, global_reasoning_controller
+from aeon.reasoning.types import (
+    ReasoningStrategy,
+    ReasoningAction,
+    ReasoningStopReason,
+    ReasoningBudget,
+    ReasoningState,
+    ReasoningCandidate,
+    ConfidenceEstimate,
+    ReasoningConfig,
+)
+from aeon.reasoning.economics import ReasoningEconomics
+from aeon.reasoning.strategies import ReasoningStrategySelector
+
+__version__ = "0.6.0"
 
 
 class AEON:
@@ -122,6 +136,8 @@ class AEON:
         tool_controller: Optional[ToolController] = None,
         speculation: bool = False,
         speculation_controller: Optional[SpeculationController] = None,
+        reasoning: bool = False,
+        reasoning_controller: Optional[ReasoningController] = None,
     ):
         self.registry = registry or global_registry
         self.backend = backend or SimulationBackend(self.registry)
@@ -131,6 +147,7 @@ class AEON:
         self.memory_enabled = memory
         self.tools_enabled = tools
         self.speculation_enabled = speculation
+        self.reasoning_enabled = reasoning
 
         # Initialize or assign memory hierarchy
         if memory_hierarchy is not None:
@@ -153,6 +170,9 @@ class AEON:
         # Initialize or assign speculation controller
         self.speculation_controller = speculation_controller or global_speculation_controller
 
+        # Initialize or assign reasoning controller
+        self.reasoning_controller = reasoning_controller or global_reasoning_controller
+
         self.voi_controller = DynamicStoppingController(
             backend=self.backend,
             registry=self.registry,
@@ -162,6 +182,8 @@ class AEON:
             tools_enabled=self.tools_enabled,
             speculation_controller=self.speculation_controller,
             speculation_enabled=self.speculation_enabled,
+            reasoning_controller=self.reasoning_controller,
+            reasoning_enabled=self.reasoning_enabled,
         )
         self.rules_controller = ComputeController(
             backend=self.backend,
@@ -172,6 +194,8 @@ class AEON:
             tools_enabled=self.tools_enabled,
             speculation_controller=self.speculation_controller,
             speculation_enabled=self.speculation_enabled,
+            reasoning_controller=self.reasoning_controller,
+            reasoning_enabled=self.reasoning_enabled,
         )
 
     @property
@@ -188,6 +212,11 @@ class AEON:
     def speculation(self) -> SpeculationController:
         """Access the speculative and token-efficient inference controller."""
         return self.speculation_controller
+
+    @property
+    def reasoning(self) -> ReasoningController:
+        """Access the adaptive latent & token-efficient reasoning controller."""
+        return self.reasoning_controller
 
     def run(
         self,
@@ -206,6 +235,10 @@ class AEON:
         speculation: Optional[bool] = None,
         speculation_strategy: Optional[str] = None,
         draft_model: Optional[str] = None,
+        reasoning: Optional[bool] = None,
+        reasoning_strategy: Optional[str] = None,
+        reasoning_budget_tokens: Optional[int] = None,
+        reasoning_budget_cost: Optional[float] = None,
     ) -> InferenceResult:
         """Run an inference request through the AEON economically-optimized engine."""
         # Parse budget dictionary if provided
@@ -220,6 +253,7 @@ class AEON:
         active_memory = memory if memory is not None else self.memory_enabled
         active_tools = tools if tools is not None else self.tools_enabled
         active_speculation = speculation if speculation is not None else self.speculation_enabled
+        active_reasoning = reasoning if reasoning is not None else self.reasoning_enabled
 
         if isinstance(query, str):
             req = InferenceRequest(
@@ -238,6 +272,11 @@ class AEON:
                 speculation=active_speculation,
                 speculation_strategy=speculation_strategy,
                 draft_model=draft_model,
+                reasoning=active_reasoning,
+                reasoning_strategy=reasoning_strategy,
+                reasoning_budget_tokens=reasoning_budget_tokens,
+                reasoning_budget_cost=reasoning_budget_cost,
+                target_confidence=target_quality,
             )
         else:
             req = query
@@ -259,6 +298,16 @@ class AEON:
                 req.speculation_strategy = speculation_strategy
             if draft_model and not req.draft_model:
                 req.draft_model = draft_model
+            if reasoning is not None:
+                req.reasoning = reasoning
+            elif req.reasoning is None and self.reasoning_enabled:
+                req.reasoning = True
+            if reasoning_strategy and not req.reasoning_strategy:
+                req.reasoning_strategy = reasoning_strategy
+            if reasoning_budget_tokens and not req.reasoning_budget_tokens:
+                req.reasoning_budget_tokens = reasoning_budget_tokens
+            if reasoning_budget_cost and not req.reasoning_budget_cost:
+                req.reasoning_budget_cost = reasoning_budget_cost
             if require_verification is not None:
                 req.require_verification = require_verification
             if session_id and not req.session_id:
@@ -348,4 +397,17 @@ __all__ = [
     "NgramSpeculationEngine",
     "SpeculationVerifier",
     "SpeculativeStrategySelector",
+    # Phase 6 Adaptive Reasoning
+    "ReasoningController",
+    "global_reasoning_controller",
+    "ReasoningStrategy",
+    "ReasoningAction",
+    "ReasoningStopReason",
+    "ReasoningBudget",
+    "ReasoningState",
+    "ReasoningCandidate",
+    "ConfidenceEstimate",
+    "ReasoningConfig",
+    "ReasoningEconomics",
+    "ReasoningStrategySelector",
 ]

@@ -106,6 +106,15 @@ class ControllerAction(str, Enum):
     SPECULATE_MULTI_TOKEN = "SPECULATE_MULTI_TOKEN"
     ADAPT_DRAFT_LENGTH = "ADAPT_DRAFT_LENGTH"
     DISABLE_SPECULATION = "DISABLE_SPECULATION"
+    # Phase 6 Reasoning Actions
+    START_REASONING = "START_REASONING"
+    CONTINUE_REASONING = "CONTINUE_REASONING"
+    INCREASE_REASONING_DEPTH = "INCREASE_REASONING_DEPTH"
+    REDUCE_REASONING = "REDUCE_REASONING"
+    SWITCH_REASONING_MODE = "SWITCH_REASONING_MODE"
+    CONVERT_TO_LATENT = "CONVERT_TO_LATENT"
+    CONVERT_TO_EXPLICIT = "CONVERT_TO_EXPLICIT"
+    STOP_REASONING = "STOP_REASONING"
 
 
 class DecisionReason(str, Enum):
@@ -140,6 +149,16 @@ class DecisionReason(str, Enum):
     SPECULATION_LENGTH_REDUCED = "SPECULATION_LENGTH_REDUCED"
     SPECULATION_LENGTH_INCREASED = "SPECULATION_LENGTH_INCREASED"
     STANDARD_DECODE_PREFERRED = "STANDARD_DECODE_PREFERRED"
+    # Phase 6 Reasoning Decision Reasons
+    REASONING_BENEFICIAL = "REASONING_BENEFICIAL"
+    REASONING_NOT_NEEDED = "REASONING_NOT_NEEDED"
+    REASONING_ESCALATED = "REASONING_ESCALATED"
+    REASONING_REDUCED = "REASONING_REDUCED"
+    REASONING_STOPPED_CONFIDENCE = "REASONING_STOPPED_CONFIDENCE"
+    REASONING_STOPPED_BUDGET = "REASONING_STOPPED_BUDGET"
+    REASONING_STOPPED_STAGNATION = "REASONING_STOPPED_STAGNATION"
+    REASONING_STOPPED_STABLE_ANSWER = "REASONING_STOPPED_STABLE_ANSWER"
+    REASONING_STOPPED_LOW_VOI = "REASONING_STOPPED_LOW_VOI"
 
 
 class UtilityWeights(BaseModel):
@@ -262,6 +281,34 @@ class Telemetry(BaseModel):
     speculation_mode: str = "SIMULATED_SPECULATIVE_DECODING"
     speculation_rounds: int = 0
 
+    # Phase 6 Adaptive Reasoning Telemetry
+    reasoning_enabled: bool = False
+    reasoning_strategy: Optional[str] = None
+    reasoning_model: Optional[str] = None
+    reasoning_depth_steps: int = 0
+    reasoning_latent_steps: int = 0
+    reasoning_explicit_tokens: int = 0
+    reasoning_tool_calls: int = 0
+    reasoning_quality_estimate: float = 0.0
+    reasoning_uncertainty: float = 0.0
+    reasoning_marginal_gain: float = 0.0
+    reasoning_marginal_cost_usd: float = 0.0
+    reasoning_marginal_latency_ms: float = 0.0
+    reasoning_marginal_compute_flops: float = 0.0
+    reasoning_voi: float = 0.0
+    reasoning_expected_utility: float = 0.0
+    reasoning_realized_utility: float = 0.0
+    reasoning_stop_reason: Optional[str] = None
+    reasoning_budget_tokens_used: int = 0
+    reasoning_budget_tokens_max: int = 0
+    reasoning_budget_cost_used: float = 0.0
+    reasoning_budget_cost_max: float = 0.0
+    reasoning_answer_stable: bool = False
+    reasoning_stagnation_detected: bool = False
+    reasoning_confidence_trace: List[float] = Field(default_factory=list)
+    reasoning_action_trace: List[Dict[str, Any]] = Field(default_factory=list)
+    reasoning_execution_mode: str = "SIMULATED_LATENT_REASONING"
+
 
 class ComputeState(BaseModel):
     """
@@ -333,6 +380,12 @@ class InferenceRequest(BaseModel):
     speculation_strategy: Optional[str] = None
     draft_model: Optional[str] = None
     max_draft_length: Optional[int] = None
+    # Phase 6 Reasoning Request Options
+    reasoning: Optional[bool] = None
+    reasoning_strategy: Optional[str] = None
+    reasoning_budget_tokens: Optional[int] = None
+    reasoning_budget_cost: Optional[float] = None
+    target_confidence: Optional[float] = None
 
 
 class ExecutionPlan(BaseModel):
@@ -353,6 +406,11 @@ class ExecutionPlan(BaseModel):
     speculation_strategy: Optional[str] = None
     draft_model: Optional[str] = None
     draft_length: int = 0
+    # Phase 6 Reasoning Plan Fields
+    reasoning_strategy: Optional[str] = None
+    reasoning_model: Optional[str] = None
+    reasoning_budget_tokens: int = 0
+    reasoning_depth: int = 0
 
 
 class InferenceResult(BaseModel):

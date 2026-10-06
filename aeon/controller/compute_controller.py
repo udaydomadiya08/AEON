@@ -44,6 +44,8 @@ class ComputeController:
         tools_enabled: bool = False,
         speculation_controller: Optional[Any] = None,
         speculation_enabled: bool = False,
+        reasoning_controller: Optional[Any] = None,
+        reasoning_enabled: bool = False,
     ):
         self.registry = registry or global_registry
         self.backend = backend or SimulationBackend(self.registry)
@@ -58,6 +60,8 @@ class ComputeController:
         self.tools_enabled = tools_enabled
         self.speculation_controller = speculation_controller
         self.speculation_enabled = speculation_enabled
+        self.reasoning_controller = reasoning_controller
+        self.reasoning_enabled = reasoning_enabled
 
     def plan_execution(self, request: InferenceRequest) -> ExecutionPlan:
         """Analyze request and generate structured execution plan."""
@@ -283,6 +287,115 @@ class ComputeController:
 
         plan = self.plan_execution(request)
 
+        # Reasoning Check (Phase 6 — Adaptive Latent & Token-Efficient Reasoning)
+        reasoning_enabled = request.reasoning is True or (request.reasoning is None and self.reasoning_enabled)
+        if reasoning_enabled and self.reasoning_controller is not None and plan.route != RouteChoice.DECISION_MODEL:
+            task_type, diff, lvl, unc = self.classifier.classify(request.query)
+            from aeon.reasoning.types import ReasoningStrategy
+            preferred_strat = ReasoningStrategy(request.reasoning_strategy) if request.reasoning_strategy else None
+            reason_ans, reason_state, reason_tel = self.reasoning_controller.execute_reasoning(
+                query=request.query,
+                context=request.context,
+                task_type=task_type.value,
+                difficulty=diff,
+                uncertainty=unc,
+                model=plan.model,
+                cost_budget_usd=request.cost_budget_usd or 0.005,
+                latency_budget_ms=request.sla_latency_ms or 5000.0,
+                target_confidence=request.target_confidence,
+                preferred_strategy=preferred_strat,
+            )
+
+            plan.reasoning_strategy = reason_state.strategy.value
+            plan.reasoning_model = reason_state.model_id
+            plan.reasoning_budget_tokens = reason_state.reasoning_tokens
+            plan.reasoning_depth = reason_state.reasoning_steps
+
+            telemetry = Telemetry(
+                request_id=request_id,
+                task_type=plan.task_type.value,
+                route=plan.route.value,
+                model=plan.model,
+                reasoning_mode=self._map_reasoning_strategy_to_mode(reason_state.strategy.value),
+                input_tokens=max(1, int(len(request.query) / 4.0)),
+                output_tokens=max(5, int(len(reason_ans) / 4.0)),
+                reasoning_tokens=reason_state.reasoning_tokens,
+                latency_ms=round(reason_tel.get("budget_latency_used", 0.0), 2),
+                compute_estimate=reason_tel.get("budget_compute_used", 0.0),
+                memory_mb=self.registry.get(plan.model).min_memory_mb if self.registry.get(plan.model) else 0.0,
+                estimated_energy=round(reason_tel.get("budget_latency_used", 0.0) / 1000.0 * 25.0, 4),
+                estimated_cost=round(reason_tel.get("budget_cost_used", 0.0), 7),
+                cache_hit=False,
+                speculative=False,
+                verification=False,
+                confidence=round(reason_state.confidence, 4),
+                escalated=False,
+                correct=True,
+                latency_type="MEASURED",
+                cost_type="ESTIMATED",
+                compute_type="ESTIMATED",
+                energy_type="ESTIMATED",
+                # Phase 6 Reasoning Telemetry
+                reasoning_enabled=True,
+                reasoning_strategy=reason_state.strategy.value,
+                reasoning_model=reason_state.model_id,
+                reasoning_depth_steps=reason_state.reasoning_steps,
+                reasoning_latent_steps=reason_state.latent_steps,
+                reasoning_explicit_tokens=reason_state.explicit_tokens,
+                reasoning_tool_calls=reason_state.tool_calls,
+                reasoning_quality_estimate=round(reason_state.quality_estimate, 4),
+                reasoning_uncertainty=round(reason_state.uncertainty, 4),
+                reasoning_marginal_gain=round(reason_state.marginal_quality_gain, 5),
+                reasoning_marginal_cost_usd=round(reason_state.marginal_cost, 7),
+                reasoning_marginal_latency_ms=round(reason_state.marginal_latency, 2),
+                reasoning_marginal_compute_flops=reason_state.marginal_compute,
+                reasoning_voi=round(reason_state.voi, 2),
+                reasoning_expected_utility=round(reason_state.expected_utility, 5),
+                reasoning_realized_utility=round(reason_state.realized_utility, 5),
+                reasoning_stop_reason=reason_state.stop_reason.value if reason_state.stop_reason else None,
+                reasoning_budget_tokens_used=reason_state.reasoning_tokens,
+                reasoning_budget_tokens_max=reason_tel.get("budget_tokens_max", 0),
+                reasoning_budget_cost_used=round(reason_tel.get("budget_cost_used", 0.0), 7),
+                reasoning_budget_cost_max=round(reason_tel.get("budget_cost_max", 0.005), 7),
+                reasoning_answer_stable=reason_tel.get("answer_stable", False),
+                reasoning_stagnation_detected=reason_tel.get("stagnation_detected", False),
+                reasoning_confidence_trace=reason_tel.get("confidence_trace", []),
+                reasoning_action_trace=reason_tel.get("action_trace", []),
+                reasoning_execution_mode=reason_tel.get("execution_mode", "SIMULATED_LATENT_REASONING"),
+            )
+
+            if mem_enabled and self.memory_hierarchy is not None and reason_ans:
+                from aeon.memory.types import MemoryRequest, MemoryScope, FreshnessPolicy, MemoryLevel
+                freshness = FreshnessPolicy(request.consistency) if request.consistency else FreshnessPolicy.FRESH
+                mem_store_req = MemoryRequest(
+                    query=request.query,
+                    context=request.context,
+                    model_id=plan.model,
+                    task_type=plan.task_type.value,
+                    scope=MemoryScope.GLOBAL,
+                    scope_id=request.session_id,
+                    freshness_policy=freshness,
+                )
+                self.memory_hierarchy.admit_and_store(
+                    request=mem_store_req,
+                    payload=reason_ans,
+                    level=MemoryLevel.L4_SEMANTIC,
+                    quality_estimate=reason_state.quality_estimate,
+                    confidence=reason_state.confidence,
+                    ttl_seconds=3600.0,
+                )
+
+            return InferenceResult(
+                answer=reason_ans,
+                route=plan.route.value,
+                compute=telemetry.compute_estimate,
+                cost=telemetry.estimated_cost,
+                latency_ms=telemetry.latency_ms,
+                confidence=telemetry.confidence,
+                trace=telemetry,
+                plan=plan,
+            )
+
         # Speculation Check (Phase 5 — Speculative & Token-Efficient Inference)
         spec_enabled = request.speculation is True or (request.speculation is None and self.speculation_enabled)
         if spec_enabled and self.speculation_controller is not None and plan.route != RouteChoice.DECISION_MODEL:
@@ -424,3 +537,19 @@ class ComputeController:
             trace=telemetry,
             plan=plan,
         )
+
+    def _map_reasoning_strategy_to_mode(self, strategy: str) -> str:
+        """Map Phase 6 reasoning strategy string to Phase 1 ReasoningMode value."""
+        mapping = {
+            "none": "none",
+            "direct": "direct",
+            "shallow": "latent",
+            "medium": "latent",
+            "deep": "explicit",
+            "latent": "latent",
+            "explicit": "explicit",
+            "tool_assisted": "adaptive",
+            "model_escalation": "explicit",
+            "hybrid": "explicit",
+        }
+        return mapping.get(strategy, "direct")

@@ -326,6 +326,47 @@ class VOIEstimator:
             next_reasoning_mode=None,
         )
 
+    def estimate_reasoning_action(
+        self,
+        state: ComputeState,
+        candidate: Any,
+    ) -> VOIResult:
+        """
+        Evaluate marginal VOI for adaptive reasoning actions.
+        Conforms to AEON Phase 6 Specification: Reasoning is an economic resource.
+        """
+        current_q = state.current_quality_estimate
+        future_q = current_q + candidate.expected_quality_gain
+        marginal_cost = max(1e-7, candidate.expected_cost_usd)
+        marginal_latency = candidate.expected_latency_ms
+        marginal_compute = candidate.expected_compute_flops
+        marginal_utility = candidate.marginal_utility
+        voi_ratio = candidate.voi_ratio
+
+        if candidate.is_viable:
+            reason = DecisionReason.REASONING_BENEFICIAL
+        else:
+            reason = DecisionReason.REASONING_STOPPED_LOW_VOI
+
+        action = ControllerAction.CONTINUE_REASONING
+
+        return VOIResult(
+            action=action,
+            expected_current_quality=round(current_q, 4),
+            expected_future_quality=round(future_q, 4),
+            marginal_quality_gain=round(candidate.expected_quality_gain, 4),
+            marginal_cost_usd=round(marginal_cost, 7),
+            marginal_latency_ms=round(marginal_latency, 2),
+            marginal_compute_flops=marginal_compute,
+            marginal_utility=round(marginal_utility, 5),
+            voi_ratio=round(voi_ratio, 2),
+            voi_threshold=self.voi_threshold,
+            is_economically_viable=candidate.is_viable,
+            reason=reason,
+            next_model=candidate.model,
+            next_reasoning_mode=None,
+        )
+
     def predict_future_quality(
         self,
         state: ComputeState,
