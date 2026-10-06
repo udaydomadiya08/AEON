@@ -6,6 +6,7 @@ model capabilities, difficulty, and economic constraints. Implements
 the strategy transition graph for AEON adaptive reasoning.
 """
 
+import re
 from typing import Optional, Tuple, List
 from aeon.reasoning.types import (
     ReasoningStrategy,
@@ -15,6 +16,30 @@ from aeon.reasoning.types import (
     ReasoningStopReason,
 )
 from aeon.types import TaskType, ReasoningMode
+
+
+def normalize_reasoning_answer(ans: str) -> str:
+    """
+    Normalize reasoning answers for robust stability and convergence detection.
+    Strips reasoning prefixes, bracketed step counters, whitespace, casing, and terminal punctuation.
+    Ensures that identical semantic conclusions from consecutive steps trigger ANSWER_STABLE.
+    """
+    if not ans:
+        return ""
+    # Strip prefixes like [Explicit-CoT step 1 (90 tokens)], [Latent-1 (6 compressed states)], etc.
+    cleaned = re.sub(r"^\[[^\]]+\]\s*", "", ans)
+    # Strip common leading labels
+    cleaned = re.sub(
+        r"^(?:direct\s+answer|reasoned\s+answer|answer)\s*:\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    # Normalize whitespace and casing
+    cleaned = " ".join(cleaned.lower().strip().split())
+    # Strip terminal punctuation
+    cleaned = cleaned.rstrip(".;,")
+    return cleaned
 
 
 class ReasoningStrategySelector:
@@ -37,6 +62,17 @@ class ReasoningStrategySelector:
         Select the cheapest adequate reasoning strategy for a task.
         AEON principle: never use expensive reasoning when cheap reasoning suffices.
         """
+        # Phase 4 Tool integration precedence: deterministic arithmetic / retrieval
+        if self.config.enable_tool_assistance and task_type in [
+            TaskType.ARITHMETIC.value,
+            TaskType.SYMBOLIC_MATH.value,
+            TaskType.RETRIEVAL.value,
+            "arithmetic",
+            "symbolic_math",
+            "retrieval",
+        ]:
+            return ReasoningStrategy.TOOL_ASSISTED
+
         # No reasoning needed for trivial classification
         if task_type == TaskType.CLASSIFICATION.value and difficulty < 0.35:
             return ReasoningStrategy.NONE
@@ -48,6 +84,8 @@ class ReasoningStrategySelector:
         # Medium tasks: shallow or latent reasoning
         if difficulty < 0.50:
             if task_type in [TaskType.MATH.value, TaskType.CODE.value, TaskType.REASONING.value]:
+                if self.config.enable_latent:
+                    return ReasoningStrategy.LATENT
                 return ReasoningStrategy.SHALLOW
             return ReasoningStrategy.DIRECT
 
@@ -63,6 +101,8 @@ class ReasoningStrategySelector:
 
         # Very hard tasks: deep/explicit reasoning
         if task_type in [TaskType.MATH.value, TaskType.CODE.value, TaskType.REASONING.value]:
+            if not self.config.enable_explicit:
+                return ReasoningStrategy.MEDIUM
             if uncertainty > 0.5:
                 return ReasoningStrategy.DEEP
             return ReasoningStrategy.EXPLICIT
@@ -121,11 +161,12 @@ class ReasoningStrategySelector:
                 if state.stagnation_count >= 2:
                     return False, ReasoningStopReason.STAGNATION_DETECTED
 
-        # Answer stability: if the last N answers are identical, stop
+        # Answer stability: if the last N answers normalize to the same conclusion, stop
         if self.config.enable_answer_stability:
             if len(state.answer_history) >= self.config.answer_stability_window:
-                recent_answers = state.answer_history[-self.config.answer_stability_window:]
-                if len(set(recent_answers)) == 1 and state.confidence >= 0.70:
+                recent_raw = state.answer_history[-self.config.answer_stability_window:]
+                recent_norm = [normalize_reasoning_answer(a) for a in recent_raw]
+                if len(set(recent_norm)) == 1 and state.confidence >= 0.70:
                     return False, ReasoningStopReason.ANSWER_STABLE
 
         return True, None
@@ -140,7 +181,6 @@ class ReasoningStrategySelector:
         latency_limit: float = 5000.0,
     ) -> ReasoningBudget:
         """Allocate a reasoning-specific budget based on strategy and task."""
-        # Base allocations per strategy
         base_tokens = {
             ReasoningStrategy.NONE: 0,
             ReasoningStrategy.DIRECT: 50,
@@ -156,8 +196,12 @@ class ReasoningStrategySelector:
         base = base_tokens.get(strategy, 100)
 
         # Scale by difficulty
-        scale = 1.0 + difficulty * 0.6 + uncertainty * 0.3
-        max_tokens = int(base * scale)
+        scale = 1.0 + max(0.0, difficulty) * 0.6 + max(0.0, uncertainty) * 0.3
+
+        safe_cost_limit = max(0.0, float(cost_limit))
+        safe_latency_limit = max(0.0, float(latency_limit))
+        safe_max_tokens = max(0, int(self.config.max_reasoning_tokens))
+        safe_max_steps = max(0, int(self.config.max_reasoning_steps))
 
         base_steps = {
             ReasoningStrategy.NONE: 0,
@@ -171,19 +215,22 @@ class ReasoningStrategySelector:
             ReasoningStrategy.MODEL_ESCALATION: 3,
             ReasoningStrategy.HYBRID: 6,
         }
-        max_steps = base_steps.get(strategy, 3)
+        req_steps = base_steps.get(strategy, 3)
+
+        max_tokens = min(safe_max_tokens, int(base * scale))
+        max_steps = min(safe_max_steps, req_steps)
 
         return ReasoningBudget(
             max_reasoning_tokens=max_tokens,
             max_reasoning_steps=max_steps,
-            max_latent_steps=max_steps * 2,
-            max_latency_ms=latency_limit,
-            max_cost_usd=cost_limit,
+            max_latent_steps=min(self.config.max_latent_steps, max_steps * 2),
+            max_latency_ms=safe_latency_limit,
+            max_cost_usd=safe_cost_limit,
             max_compute_flops=1e13,
         )
 
     def get_transition_candidates(self, strategy: ReasoningStrategy) -> List[ReasoningStrategy]:
-        """Allowed next strategies in the transition graph."""
+        """Allowed next strategies in the transition graph with ablation awareness."""
         transitions = {
             ReasoningStrategy.NONE: [ReasoningStrategy.DIRECT, ReasoningStrategy.SHALLOW],
             ReasoningStrategy.DIRECT: [ReasoningStrategy.SHALLOW, ReasoningStrategy.LATENT],
@@ -196,4 +243,16 @@ class ReasoningStrategySelector:
             ReasoningStrategy.MODEL_ESCALATION: [ReasoningStrategy.HYBRID],
             ReasoningStrategy.HYBRID: [],
         }
-        return transitions.get(strategy, [ReasoningStrategy.DEEP])
+        allowed = transitions.get(strategy, [ReasoningStrategy.DEEP])
+        filtered = []
+        for cand in allowed:
+            if cand == ReasoningStrategy.LATENT and not self.config.enable_latent:
+                continue
+            if cand in [ReasoningStrategy.EXPLICIT, ReasoningStrategy.DEEP] and not self.config.enable_explicit:
+                continue
+            if cand == ReasoningStrategy.TOOL_ASSISTED and not self.config.enable_tool_assistance:
+                continue
+            if cand == ReasoningStrategy.MODEL_ESCALATION and not self.config.enable_model_escalation:
+                continue
+            filtered.append(cand)
+        return filtered

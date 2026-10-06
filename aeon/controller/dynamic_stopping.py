@@ -436,9 +436,17 @@ class DynamicStoppingController:
             else:
                 res = self.backend.generate(request, plan)
 
-            # Reasoning Enhancement (Phase 6) — Apply adaptive reasoning after initial generation
+            # Reasoning Enhancement (Phase 6) — Apply adaptive reasoning after initial generation if budget permits
             reasoning_enabled = request.reasoning is True or (request.reasoning is None and self.reasoning_enabled)
-            if reasoning_enabled and self.reasoning_controller is not None and plan.route != RouteChoice.DECISION_MODEL:
+            rem_cost = state.remaining_cost_budget if state.remaining_cost_budget is not None else 0.005
+            rem_lat = state.remaining_latency_ms if state.remaining_latency_ms is not None else 5000.0
+            if (
+                reasoning_enabled
+                and self.reasoning_controller is not None
+                and plan.route != RouteChoice.DECISION_MODEL
+                and rem_cost > 0.0
+                and rem_lat > 0.0
+            ):
                 from aeon.reasoning.types import ReasoningStrategy
                 preferred_strat = ReasoningStrategy(request.reasoning_strategy) if request.reasoning_strategy else None
                 reason_ans, reason_state, reason_tel = self.reasoning_controller.execute_reasoning(
@@ -448,8 +456,8 @@ class DynamicStoppingController:
                     difficulty=state.difficulty,
                     uncertainty=state.uncertainty,
                     model=state.current_model,
-                    cost_budget_usd=max(0.0001, (state.remaining_cost_budget or 0.005) * 0.5),
-                    latency_budget_ms=max(100.0, (state.remaining_latency_ms or 5000.0) * 0.5),
+                    cost_budget_usd=rem_cost * 0.5,
+                    latency_budget_ms=rem_lat * 0.5,
                     target_confidence=budget_cfg.target_quality,
                     preferred_strategy=preferred_strat,
                 )

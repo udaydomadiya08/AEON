@@ -29,6 +29,7 @@ from aeon.types import (
     DifficultyLevel,
     RouteChoice,
     ReasoningMode,
+    UtilityWeights,
 )
 from aeon.controller.compute_controller import ComputeController
 from aeon.controller.dynamic_stopping import DynamicStoppingController

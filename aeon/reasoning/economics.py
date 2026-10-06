@@ -7,7 +7,7 @@ Integrates with the existing VOI framework.
 """
 
 import math
-from typing import Optional, List
+from typing import Optional, List, Tuple, Any
 from aeon.reasoning.types import (
     ReasoningStrategy,
     ReasoningCandidate,
@@ -20,6 +20,26 @@ from aeon.types import (
     TaskType,
 )
 from aeon.models.model_registry import ModelRegistry, global_registry
+
+
+def _sanitize_float(
+    val: Any,
+    default: float = 0.0,
+    min_val: Optional[float] = None,
+    max_val: Optional[float] = None,
+) -> float:
+    """Safely parse and clamp floating point numbers against NaN, inf, or out-of-bounds."""
+    try:
+        f = float(val)
+        if math.isnan(f) or math.isinf(f):
+            return default
+        if min_val is not None and f < min_val:
+            return min_val
+        if max_val is not None and f > max_val:
+            return max_val
+        return f
+    except (ValueError, TypeError):
+        return default
 
 
 class ReasoningEconomics:
@@ -52,11 +72,13 @@ class ReasoningEconomics:
         Generate and evaluate all viable reasoning candidates from current state.
         Returns candidates sorted by marginal utility (descending).
         """
+        diff = _sanitize_float(difficulty, 0.5, 0.0, 1.0)
+        unc = _sanitize_float(uncertainty, 0.5, 0.0, 1.0)
         candidates = []
 
         # Generate candidate strategies based on current state and budget
         potential_strategies = self._generate_candidate_strategies(
-            state, budget, task_type, difficulty, uncertainty
+            state, budget, task_type, diff, unc
         )
 
         for strategy, model in potential_strategies:
@@ -66,8 +88,8 @@ class ReasoningEconomics:
                 state=state,
                 budget=budget,
                 task_type=task_type,
-                difficulty=difficulty,
-                uncertainty=uncertainty,
+                difficulty=diff,
+                uncertainty=unc,
             )
             candidates.append(candidate)
 
@@ -162,7 +184,8 @@ class ReasoningEconomics:
             )
 
         # Diminishing returns factor based on reasoning steps already taken
-        diminishing = math.exp(-0.20 * state.reasoning_steps)
+        safe_steps = max(0, state.reasoning_steps)
+        diminishing = math.exp(-0.20 * safe_steps)
         effective_gain = expected_quality_gain * diminishing
 
         # Marginal energy
@@ -171,13 +194,20 @@ class ReasoningEconomics:
         )
 
         # Multi-objective utility: ΔU = quality_gain - Σ λ_i * cost_i
+        # Clamp lambda weights to non-negative to avoid pathological negative-penalty exploits
+        lambda_latency = max(0.0, getattr(self.weights, "lambda_latency", 0.0001))
+        lambda_cost = max(0.0, getattr(self.weights, "lambda_cost", 10.0))
+        lambda_compute = max(0.0, getattr(self.weights, "lambda_compute", 1e-12))
+        lambda_energy = max(0.0, getattr(self.weights, "lambda_energy", 0.001))
+        quality_weight = max(0.0, getattr(self.weights, "quality", 1.0))
+
         resource_penalty = (
-            self.weights.lambda_latency * marginal_latency_ms
-            + self.weights.lambda_cost * marginal_cost_usd
-            + self.weights.lambda_compute * marginal_compute_flops
-            + self.weights.lambda_energy * marginal_energy
+            lambda_latency * marginal_latency_ms
+            + lambda_cost * marginal_cost_usd
+            + lambda_compute * marginal_compute_flops
+            + lambda_energy * marginal_energy
         )
-        marginal_utility = (self.weights.quality * effective_gain) - resource_penalty
+        marginal_utility = (quality_weight * effective_gain) - resource_penalty
 
         # VOI ratio: quality gain per dollar
         voi_ratio = (
@@ -222,7 +252,7 @@ class ReasoningEconomics:
             return 0.0
 
         base_model_quality = profile.quality_score
-        current_quality = state.quality_estimate
+        current_quality = _sanitize_float(state.quality_estimate, 0.0, 0.0, 1.0)
 
         # Maximum possible gain
         headroom = max(0.0, base_model_quality - current_quality + 0.05)
@@ -283,12 +313,13 @@ class ReasoningEconomics:
         task_type: str,
         difficulty: float,
         uncertainty: float,
-    ) -> List[tuple]:
+    ) -> List[Tuple[ReasoningStrategy, str]]:
         """
         Generate candidate (strategy, model) pairs based on current state.
         Respects the principle: always evaluate cheaper options first.
+        Respects ablation settings: disable latent, explicit, tools, or escalation if configured.
         """
-        candidates = []
+        candidates: List[Tuple[ReasoningStrategy, str]] = []
         model = state.model_id
 
         # If no reasoning started, consider starting from cheapest up
@@ -304,50 +335,64 @@ class ReasoningEconomics:
                 candidates.append((ReasoningStrategy.LATENT, model))
                 if difficulty >= 0.7:
                     candidates.append((ReasoningStrategy.DEEP, model))
-            return candidates
+        else:
+            # From existing reasoning, consider escalation transitions
+            current = state.strategy
 
-        # From existing reasoning, consider escalation transitions
-        current = state.strategy
+            if current == ReasoningStrategy.DIRECT:
+                candidates.append((ReasoningStrategy.SHALLOW, model))
+                candidates.append((ReasoningStrategy.LATENT, model))
 
-        if current == ReasoningStrategy.DIRECT:
-            candidates.append((ReasoningStrategy.SHALLOW, model))
-            candidates.append((ReasoningStrategy.LATENT, model))
+            elif current == ReasoningStrategy.SHALLOW:
+                candidates.append((ReasoningStrategy.MEDIUM, model))
+                candidates.append((ReasoningStrategy.LATENT, model))
 
-        elif current == ReasoningStrategy.SHALLOW:
-            candidates.append((ReasoningStrategy.MEDIUM, model))
-            candidates.append((ReasoningStrategy.LATENT, model))
+            elif current in [ReasoningStrategy.MEDIUM, ReasoningStrategy.LATENT]:
+                candidates.append((ReasoningStrategy.DEEP, model))
+                candidates.append((ReasoningStrategy.EXPLICIT, model))
+                if self.config.enable_tool_assistance:
+                    candidates.append((ReasoningStrategy.TOOL_ASSISTED, model))
 
-        elif current in [ReasoningStrategy.MEDIUM, ReasoningStrategy.LATENT]:
-            candidates.append((ReasoningStrategy.DEEP, model))
-            candidates.append((ReasoningStrategy.EXPLICIT, model))
-            if self.config.enable_tool_assistance:
-                candidates.append((ReasoningStrategy.TOOL_ASSISTED, model))
+            elif current in [ReasoningStrategy.DEEP, ReasoningStrategy.EXPLICIT]:
+                if self.config.enable_model_escalation:
+                    bigger = self._get_bigger_model(model)
+                    if bigger:
+                        candidates.append((ReasoningStrategy.EXPLICIT, bigger))
+                        candidates.append((ReasoningStrategy.HYBRID, bigger))
+                if self.config.enable_tool_assistance:
+                    candidates.append((ReasoningStrategy.TOOL_ASSISTED, model))
 
-        elif current in [ReasoningStrategy.DEEP, ReasoningStrategy.EXPLICIT]:
-            if self.config.enable_model_escalation:
-                # Try a bigger model
-                bigger = self._get_bigger_model(model)
-                if bigger:
-                    candidates.append((ReasoningStrategy.EXPLICIT, bigger))
-                    candidates.append((ReasoningStrategy.HYBRID, bigger))
-            if self.config.enable_tool_assistance:
-                candidates.append((ReasoningStrategy.TOOL_ASSISTED, model))
+            elif current == ReasoningStrategy.TOOL_ASSISTED:
+                candidates.append((ReasoningStrategy.HYBRID, model))
+                if self.config.enable_model_escalation:
+                    bigger = self._get_bigger_model(model)
+                    if bigger:
+                        candidates.append((ReasoningStrategy.EXPLICIT, bigger))
 
-        elif current == ReasoningStrategy.TOOL_ASSISTED:
-            candidates.append((ReasoningStrategy.HYBRID, model))
-            bigger = self._get_bigger_model(model)
-            if bigger:
-                candidates.append((ReasoningStrategy.EXPLICIT, bigger))
+            elif current == ReasoningStrategy.HYBRID:
+                if self.config.enable_model_escalation:
+                    bigger = self._get_bigger_model(model)
+                    if bigger:
+                        candidates.append((ReasoningStrategy.HYBRID, bigger))
 
-        elif current == ReasoningStrategy.HYBRID:
-            bigger = self._get_bigger_model(model)
-            if bigger:
-                candidates.append((ReasoningStrategy.HYBRID, bigger))
+        # Filter out disabled capabilities (ablations)
+        filtered: List[Tuple[ReasoningStrategy, str]] = []
+        for strat, mod in candidates:
+            if strat == ReasoningStrategy.LATENT and not self.config.enable_latent:
+                continue
+            if strat in [ReasoningStrategy.EXPLICIT, ReasoningStrategy.DEEP] and not self.config.enable_explicit:
+                continue
+            if strat == ReasoningStrategy.TOOL_ASSISTED and not self.config.enable_tool_assistance:
+                continue
+            if strat == ReasoningStrategy.MODEL_ESCALATION and not self.config.enable_model_escalation:
+                continue
+            if mod != model and not self.config.enable_model_escalation:
+                continue
+            filtered.append((strat, mod))
 
-        # Always consider doing nothing more
-        if not candidates:
+        if not filtered:
             return [(ReasoningStrategy.NONE, model)]
-        return candidates
+        return filtered
 
     def _get_bigger_model(self, current_model: str) -> Optional[str]:
         """Get next larger model in the AEON tier hierarchy."""
@@ -398,8 +443,10 @@ class ReasoningEconomics:
         step_number: int = 1,
     ) -> float:
         """Estimate marginal quality improvement from an additional reasoning step."""
-        base_gain = 0.15 * difficulty + 0.05
-        diminishing = math.exp(-0.25 * max(0, step_number - 1))
+        diff = _sanitize_float(difficulty, 0.5, 0.0, 1.0)
+        step = max(1, int(_sanitize_float(step_number, 1, 1, 100)))
+        base_gain = 0.15 * diff + 0.05
+        diminishing = math.exp(-0.25 * (step - 1))
         return round(base_gain * diminishing, 4)
 
     def calculate_reasoning_voi(
@@ -408,7 +455,11 @@ class ReasoningEconomics:
         marginal_cost_usd: float,
     ) -> float:
         """Calculate Value-of-Information ratio (quality gain per dollar)."""
-        return round(marginal_quality_gain / marginal_cost_usd, 2) if marginal_cost_usd > 0 else 0.0
+        gain = _sanitize_float(marginal_quality_gain, 0.0, 0.0, 1.0)
+        cost = _sanitize_float(marginal_cost_usd, 0.0, 0.0, None)
+        if cost <= 0.0:
+            return 0.0
+        return round(gain / cost, 2)
 
     def evaluate_all_candidates(
         self,

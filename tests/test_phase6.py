@@ -5,6 +5,7 @@ Strategy Selection, Confidence-Aware Dynamic Stopping, Answer Stability,
 Telemetry, Benchmark Harness, CLI, and Specification Property Invariants.
 """
 
+import math
 import pytest
 from click.testing import CliRunner
 from aeon import (
@@ -28,7 +29,10 @@ from aeon import (
     ReasoningController,
     global_reasoning_controller,
     global_registry,
+    UtilityWeights,
 )
+from aeon.reasoning.strategies import normalize_reasoning_answer
+from aeon.reasoning.controller import clean_reasoning_output
 from aeon.cli.main import cli
 from aeon.benchmarks.harness import BenchmarkHarness
 
@@ -463,3 +467,348 @@ def test_invariant_budget_enforcement():
     )
     assert tel["budget_cost_used"] <= 0.001
     assert state.is_terminal is True
+
+
+# =========================================================================
+# 9. Adversarial Audit & Hardening Regression Tests
+# =========================================================================
+
+def test_adversarial_zero_and_tiny_budgets():
+    """Adversarial test: Zero or negative budgets must stop immediately with BUDGET_EXHAUSTED."""
+    # 1. Zero steps in config
+    cfg_zero_steps = ReasoningConfig(max_reasoning_steps=0)
+    ctrl = ReasoningController(config=cfg_zero_steps)
+    ans, state, tel = ctrl.execute_reasoning(
+        query="Explain quantum gravity",
+        task_type="reasoning",
+        difficulty=0.8,
+        uncertainty=0.8,
+    )
+    assert state.stop_reason == ReasoningStopReason.BUDGET_EXHAUSTED
+    assert state.reasoning_steps == 0
+    assert state.reasoning_tokens == 0
+    assert len(ans) > 0
+
+    # 2. Zero cost budget
+    ctrl_default = ReasoningController()
+    ans, state, tel = ctrl_default.execute_reasoning(
+        query="Explain string theory",
+        task_type="reasoning",
+        difficulty=0.8,
+        cost_budget_usd=0.0,
+    )
+    assert state.stop_reason == ReasoningStopReason.BUDGET_EXHAUSTED
+    assert state.reasoning_steps == 0
+
+    # 3. Zero latency budget
+    ans, state, tel = ctrl_default.execute_reasoning(
+        query="Prove Fermat's Last Theorem",
+        task_type="reasoning",
+        difficulty=0.9,
+        latency_budget_ms=0.0,
+    )
+    assert state.stop_reason == ReasoningStopReason.BUDGET_EXHAUSTED
+    assert state.reasoning_steps == 0
+
+    # 4. Tiny budget: max_reasoning_steps = 1
+    cfg_one_step = ReasoningConfig(max_reasoning_steps=1)
+    ctrl_one = ReasoningController(config=cfg_one_step)
+    ans, state, tel = ctrl_one.execute_reasoning(
+        query="Deep analytical proof",
+        task_type="reasoning",
+        difficulty=0.9,
+    )
+    assert state.reasoning_steps <= 1
+
+
+def test_economic_voi_cases_a_through_g():
+    """Test all formal economic VOI decision cases (Case A through Case G)."""
+    econ = ReasoningEconomics()
+    budget = ReasoningBudget(max_reasoning_tokens=1000, max_cost_usd=0.05, max_latency_ms=10000.0)
+
+    # Case A: High quality gain + low cost -> Viable / Continue
+    state_a = ReasoningState(
+        strategy=ReasoningStrategy.SHALLOW,
+        model_id="aeon-small-1.5b",
+        quality_estimate=0.40,
+        reasoning_steps=1,
+    )
+    candidates_a = econ.evaluate_candidates(
+        state=state_a,
+        budget=budget,
+        task_type="reasoning",
+        difficulty=0.8,
+        uncertainty=0.7,
+    )
+    viable_a = [c for c in candidates_a if c.is_viable]
+    assert len(viable_a) > 0
+    assert viable_a[0].marginal_utility > 0.0
+
+    # Case B: Tiny quality gain + high cost -> STOP (non-viable)
+    state_b = ReasoningState(
+        strategy=ReasoningStrategy.HYBRID,
+        model_id="aeon-large-70b",
+        quality_estimate=0.95,  # Almost no headroom
+        reasoning_steps=8,      # Severe diminishing returns
+    )
+    candidates_b = econ.evaluate_candidates(
+        state=state_b,
+        budget=budget,
+        task_type="reasoning",
+        difficulty=0.1,
+        uncertainty=0.1,
+    )
+    viable_b = [c for c in candidates_b if c.is_viable]
+    assert len(viable_b) == 0
+
+    # Case C: Negative marginal utility due to extreme cost penalties -> STOP
+    heavy_weights = UtilityWeights(quality=1.0, lambda_cost=100000.0, lambda_latency=100.0)
+    econ_penalized = ReasoningEconomics(weights=heavy_weights)
+    candidates_c = econ_penalized.evaluate_candidates(
+        state=state_a,
+        budget=budget,
+        task_type="reasoning",
+        difficulty=0.5,
+        uncertainty=0.5,
+    )
+    viable_c = [c for c in candidates_c if c.is_viable]
+    assert len(viable_c) == 0
+
+    # Case D: Budget exhausted -> STOP
+    budget_exhausted = ReasoningBudget(max_reasoning_tokens=10, tokens_used=10)
+    candidates_d = econ.evaluate_candidates(
+        state=state_a,
+        budget=budget_exhausted,
+        task_type="reasoning",
+        difficulty=0.8,
+        uncertainty=0.8,
+    )
+    assert all(not c.is_viable for c in candidates_d)
+
+    # Case E: Latency SLA exceeded -> STOP
+    budget_lat_exhausted = ReasoningBudget(max_latency_ms=10.0, latency_used_ms=10.0)
+    candidates_e = econ.evaluate_candidates(
+        state=state_a,
+        budget=budget_lat_exhausted,
+        task_type="reasoning",
+        difficulty=0.8,
+        uncertainty=0.8,
+    )
+    assert all(not c.is_viable for c in candidates_e)
+
+    # Case F: Reasoning quality stagnates / plateau -> STOP with QUALITY_PLATEAU
+    selector = ReasoningStrategySelector(config=ReasoningConfig(stagnation_window=3, stagnation_threshold=0.01))
+    state_plateau = ReasoningState(
+        quality_history=[0.70, 0.70, 0.70],
+        confidence=0.70,
+        reasoning_steps=3,
+    )
+    should_cont, stop_reason = selector.should_continue_reasoning(state_plateau, budget)
+    assert should_cont is False
+    assert stop_reason == ReasoningStopReason.QUALITY_PLATEAU
+
+    # Case G: Confidence saturates -> STOP with TARGET_CONFIDENCE_REACHED
+    state_sat = ReasoningState(
+        confidence=0.92,
+        reasoning_steps=2,
+    )
+    should_cont_g, stop_reason_g = selector.should_continue_reasoning(state_sat, budget)
+    assert should_cont_g is False
+    assert stop_reason_g == ReasoningStopReason.TARGET_CONFIDENCE_REACHED
+
+
+def test_numerical_robustness_and_pathological_weights():
+    """Verify system handles NaN, inf, negative values, and pathological weights safely."""
+    econ = ReasoningEconomics()
+    budget = ReasoningBudget(max_reasoning_tokens=500, max_cost_usd=0.01, max_latency_ms=2000.0)
+    state = ReasoningState(
+        strategy=ReasoningStrategy.SHALLOW,
+        model_id="aeon-small-1.5b",
+        quality_estimate=0.5,
+    )
+
+    # Test with NaN, inf, and negative inputs
+    candidates_nan = econ.evaluate_candidates(
+        state=state,
+        budget=budget,
+        task_type="reasoning",
+        difficulty=float("nan"),
+        uncertainty=float("inf"),
+    )
+    assert len(candidates_nan) > 0
+    for c in candidates_nan:
+        assert not math.isnan(c.marginal_utility)
+        assert not math.isinf(c.marginal_utility)
+        assert not math.isnan(c.voi_ratio)
+        assert not math.isinf(c.voi_ratio)
+
+    # Pathological negative weights should be clamped to >= 0 and never create infinite utility
+    pathological_weights = UtilityWeights(
+        quality=1.0,
+        lambda_latency=-50.0,
+        lambda_cost=-1000.0,
+        lambda_compute=-1.0,
+        lambda_energy=-1.0,
+    )
+    econ_patho = ReasoningEconomics(weights=pathological_weights)
+    candidates_patho = econ_patho.evaluate_candidates(
+        state=state,
+        budget=budget,
+        task_type="reasoning",
+        difficulty=0.5,
+        uncertainty=0.5,
+    )
+    for c in candidates_patho:
+        assert c.marginal_utility <= 1.0  # Quality is bounded in [0, 1]
+
+
+def test_answer_stability_normalization():
+    """Verify that normalize_reasoning_answer handles prefixes, casing, and whitespace."""
+    # Prefix normalization
+    raw1 = "[Explicit-CoT step 1 (90 tokens)] Paris is the capital of France."
+    raw2 = "[Explicit-CoT step 2 (90 tokens)]  Paris is the capital of France.  "
+    raw3 = "[Explicit-CoT step 3 (90 tokens)] PARIS IS THE CAPITAL OF FRANCE."
+    assert normalize_reasoning_answer(raw1) == "paris is the capital of france"
+    assert normalize_reasoning_answer(raw2) == "paris is the capital of france"
+    assert normalize_reasoning_answer(raw3) == "paris is the capital of france"
+    assert normalize_reasoning_answer(raw1) == normalize_reasoning_answer(raw2)
+
+    # Latent prefix normalization
+    raw_lat = "[Latent-1 (6 compressed states)] 146.531 (17.3% of 847 = 0.173 * 847 = 146.531)"
+    assert "146.531" in normalize_reasoning_answer(raw_lat)
+
+    # Check stability trigger in should_continue_reasoning
+    selector = ReasoningStrategySelector(ReasoningConfig(enable_answer_stability=True, answer_stability_window=3))
+    budget = ReasoningBudget(max_reasoning_steps=10)
+    state_stable = ReasoningState(
+        answer_history=[raw1, raw2, raw3],
+        confidence=0.75,
+        reasoning_steps=3,
+    )
+    should_cont, stop_reason = selector.should_continue_reasoning(state_stable, budget)
+    assert should_cont is False
+    assert stop_reason == ReasoningStopReason.ANSWER_STABLE
+
+    # Oscillating answers should NOT trigger stability
+    state_osc = ReasoningState(
+        answer_history=["Answer A", "Answer B", "Answer A"],
+        confidence=0.75,
+        reasoning_steps=3,
+    )
+    should_cont_osc, stop_reason_osc = selector.should_continue_reasoning(state_osc, budget)
+    assert should_cont_osc is True
+    assert stop_reason_osc is None
+
+
+def test_stagnation_detection_on_plateau_and_noise():
+    """Verify that tiny noise does not prevent plateau / stagnation detection."""
+    selector = ReasoningStrategySelector(ReasoningConfig(stagnation_window=4, stagnation_threshold=0.01))
+    budget = ReasoningBudget(max_reasoning_steps=10)
+
+    # Sub-threshold noisy sequence: range is 0.701 - 0.699 = 0.002 < 0.01
+    state_noisy = ReasoningState(
+        quality_history=[0.700, 0.701, 0.699, 0.700],
+        confidence=0.60,
+        reasoning_steps=4,
+    )
+    should_cont, stop_reason = selector.should_continue_reasoning(state_noisy, budget)
+    assert should_cont is False
+    assert stop_reason == ReasoningStopReason.QUALITY_PLATEAU
+
+
+def test_cot_privacy_and_clean_output():
+    """Verify that CoT scratchpad text is never leaked in final answers or telemetry."""
+    ctrl = ReasoningController()
+    ans, state, tel = ctrl.execute_reasoning(
+        query="What is 17.3% of 847?",
+        task_type="math",
+        difficulty=0.6,
+        preferred_strategy=ReasoningStrategy.EXPLICIT,
+    )
+    # Output must be clean without bracketed internal scratchpad prefixes
+    assert not ans.startswith("[Explicit-CoT")
+    assert not ans.startswith("[Latent-")
+    assert not ans.startswith("[Shallow")
+    assert "146.531" in ans
+
+    # Telemetry must contain metadata but NO private hidden CoT text
+    assert "reasoning_strategy" in tel
+    assert "reasoning_steps" in tel
+    assert "action_trace" in tel
+    for action in tel["action_trace"]:
+        assert "scratchpad" not in action
+        assert "chain_of_thought" not in action
+        assert "step" in action
+        assert "strategy" in action or "to_strategy" in action
+
+
+def test_failure_injection_and_fallback():
+    """Verify system fails safely and triggers fallback when a model error occurs."""
+    ctrl = ReasoningController()
+    # Inject non-existent model ID
+    ans, state, tel = ctrl.execute_reasoning(
+        query="Compute topology invariants",
+        task_type="reasoning",
+        difficulty=0.7,
+        model="non_existent_faulty_model_999",
+        preferred_strategy=ReasoningStrategy.EXPLICIT,
+    )
+    assert state.fallback_occurred is True
+    assert state.stop_reason == ReasoningStopReason.FAILURE
+    assert len(ans) > 0  # Returned safe fallback answer
+
+
+def test_tool_precedence_in_strategy_selection():
+    """Verify that deterministic tasks select TOOL_ASSISTED when tools are enabled."""
+    selector = ReasoningStrategySelector(ReasoningConfig(enable_tool_assistance=True))
+    strat = selector.select_initial_strategy(
+        task_type=TaskType.ARITHMETIC.value,
+        difficulty=0.6,
+        uncertainty=0.5,
+        model="aeon-small-1.5b",
+    )
+    assert strat == ReasoningStrategy.TOOL_ASSISTED
+
+
+def test_ablation_enforcement():
+    """Verify that disabling components in ReasoningConfig genuinely disables them."""
+    econ_no_latent = ReasoningEconomics(config=ReasoningConfig(enable_latent=False))
+    state = ReasoningState(strategy=ReasoningStrategy.NONE, model_id="aeon-small-1.5b")
+    budget = ReasoningBudget()
+
+    cands_no_latent = econ_no_latent.evaluate_candidates(
+        state=state, budget=budget, task_type="reasoning", difficulty=0.5, uncertainty=0.5
+    )
+    for c in cands_no_latent:
+        assert c.strategy != ReasoningStrategy.LATENT
+
+    econ_no_explicit = ReasoningEconomics(config=ReasoningConfig(enable_explicit=False))
+    state_deep = ReasoningState(strategy=ReasoningStrategy.MEDIUM, model_id="aeon-small-1.5b", reasoning_started=True)
+    cands_no_explicit = econ_no_explicit.evaluate_candidates(
+        state=state_deep, budget=budget, task_type="reasoning", difficulty=0.8, uncertainty=0.8
+    )
+    for c in cands_no_explicit:
+        assert c.strategy not in [ReasoningStrategy.EXPLICIT, ReasoningStrategy.DEEP]
+
+
+def test_multi_run_reproducibility():
+    """Verify that repeated benchmark executions produce deterministic and stable results."""
+    from aeon.benchmarks.harness import BenchmarkHarness
+    harness = BenchmarkHarness()
+
+    runs = []
+    for _ in range(5):
+        res = harness.run_phase6()
+        runs.append(res)
+
+    for r in runs:
+        assert "1. No Reasoning (Direct)" in r
+        assert "2. Fixed Heavy Reasoning" in r
+        assert "3. AEON Adaptive Reasoning" in r
+        adaptive_m = r["3. AEON Adaptive Reasoning"]
+        assert adaptive_m.accuracy > 0.0
+        assert adaptive_m.mean_cost_usd > 0.0
+
+    # Check stability across runs
+    costs = [r["3. AEON Adaptive Reasoning"].mean_cost_usd for r in runs]
+    assert max(costs) - min(costs) < 0.0001

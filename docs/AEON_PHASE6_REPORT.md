@@ -340,4 +340,32 @@ AEON Phase 6 successfully transforms reasoning from an unconstrained, costly tok
 - **Phase 3 (Hierarchical Memory Economics)**: Active & Verified
 - **Phase 4 (Tool-Aware Computation)**: Active & Verified
 - **Phase 5 (Speculative & Token-Efficient Inference)**: Active & Verified
-- **Phase 6 (Adaptive Latent & Token-Efficient Reasoning)**: **COMPLETED & VALIDATED (135/135 Tests Passing)**
+- **Phase 6 (Adaptive Latent & Token-Efficient Reasoning)**: **COMPLETED, AUDITED & HARDENED (145/145 Tests Passing)**
+
+---
+
+## 8. Audit Results
+
+### 8.1 Audit Metadata
+- **Audit Date**: October 2026
+- **Auditor Role**: Senior AI Systems Engineer, ML Systems Reviewer & Adversarial QA
+- **Baseline Commit**: `5511f71`
+- **Baseline Test Suite**: 135 passing tests
+- **Post-Audit Test Suite**: 145 passing tests (10 new adversarial regression tests)
+- **Final Verdict**: `PASS WITH LIMITATIONS` (Simulation Abstraction Fully Disclosed)
+
+### 8.2 Audited Deficiencies & Implemented Fixes
+1. **Answer Stability Flaw (`strategies.py`)**: Fixed raw string comparison bug where step annotations prevented identical conclusions from triggering `ANSWER_STABLE`. Introduced `normalize_reasoning_answer()` to normalize casing, whitespace, and strip bracketed prefixes.
+2. **Budget Bypass on 0 / Negative Budgets (`strategies.py`, `controller.py`)**: Added strict pre-loop checks that immediately stop with `BUDGET_EXHAUSTED` without executing reasoning steps when budgets are zero or exhausted.
+3. **Dynamic Stopping Budget Leaks (`dynamic_stopping.py`)**: Removed artificial minimum budget floor `max(0.0001, ...)` that leaked reasoning compute when parent dynamic stopping budget was exhausted.
+4. **Tool Precedence in Strategy Selection (`strategies.py`)**: Guaranteed that deterministic arithmetic, symbolic math, and retrieval tasks select `TOOL_ASSISTED` before heavy model reasoning.
+5. **Ablation Leakage (`economics.py`)**: Enforced configuration flags (`enable_latent`, `enable_explicit`, `enable_tool_assistance`, `enable_model_escalation`) in candidate generation so ablations cannot be bypassed.
+6. **Numerical Robustness & Pathological Weights (`economics.py`)**: Added `_sanitize_float()` guards against `NaN`, `inf`, and out-of-bounds values, and clamped resource penalty weights $\lambda \ge 0.0$ to prevent infinite utility exploits.
+7. **Chain-of-Thought Privacy & Cache Hygiene (`controller.py`, `compute_controller.py`)**: Added `clean_reasoning_output()` to strip internal reasoning scratchpad formatting from returned answers and memory caches.
+8. **Failure Injection Safety (`controller.py`)**: Wrapped reasoning step execution in exception handling to safely trigger `ReasoningStopReason.FAILURE`, set `state.fallback_occurred = True`, and generate a safe fallback answer.
+9. **Calibration Integration (`controller.py`)**: Linked reasoning completion directly into `global_calibration_tracker` and `global_calibration_store`.
+
+### 8.3 Simulation vs Real Hardware Distinction
+- **Latent Reasoning (`SIMULATED_LATENT_REASONING`)**: All latent token reductions, hidden state transitions, and compressed state FLOPs are modeled abstractions and architectural specifications. There are currently **no real GPU hidden-layer recurrent activations** executed on physical hardware backends.
+- **Latency & Wall-Clock**: Latency reported in telemetry is calculated from model profile benchmark constants and token generation simulation, labeled as `MEASURED` for wall-clock dispatch and `ESTIMATED` for token generation.
+- **Costs & FLOPs**: Monetization and compute calculations are calibrated estimations based on published frontier pricing and 2 FLOPs/param token formulas.

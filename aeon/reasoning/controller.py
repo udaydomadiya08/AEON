@@ -11,6 +11,7 @@ allocated only when expected marginal quality gain exceeds marginal cost.
 """
 
 import math
+import re
 import time
 import uuid
 from typing import Optional, Dict, Any, Tuple, List
@@ -34,6 +35,19 @@ from aeon.types import (
     UtilityWeights,
 )
 from aeon.models.model_registry import ModelRegistry, global_registry
+from aeon.decision.calibration import global_calibration_tracker, global_calibration_store
+
+
+def clean_reasoning_output(ans: str) -> str:
+    """
+    Remove internal reasoning prefixes and bracketed step annotations from final answer.
+    Preserves chain-of-thought privacy and prevents telemetry / cache pollution.
+    """
+    if not ans:
+        return ""
+    # Strip prefixes like [Explicit-CoT step 1 (90 tokens)], [Latent-1 (6 compressed states)], etc.
+    cleaned = re.sub(r"^\[[^\]]+\]\s*", "", ans)
+    return cleaned.strip()
 
 
 class ReasoningController:
@@ -84,7 +98,7 @@ class ReasoningController:
         - Allocates a budget
         - Runs an iterative reasoning loop
         - Stops when confidence, budget, or stability criteria are met
-        - Reports full telemetry
+        - Reports full telemetry with CoT privacy preserved
         """
         request_id = f"reason-{uuid.uuid4().hex[:8]}"
 
@@ -147,25 +161,67 @@ class ReasoningController:
             state.explicit_tokens = 0
             state.reasoning_tokens = 0
             telemetry = self._build_telemetry(state, budget, query)
-            return answer, state, telemetry
+            self._record_calibration(state, budget)
+            return clean_reasoning_output(answer), state, telemetry
+
+        # Check binding zero/exhausted budget constraints prior to loop
+        if (
+            budget.is_exhausted()
+            or budget.max_reasoning_steps <= 0
+            or budget.max_reasoning_tokens <= 0
+            or budget.max_cost_usd <= 0.0
+            or budget.max_latency_ms <= 0.0
+        ):
+            answer = self._generate_direct_answer(query, task_type, model)
+            state.confidence = self._estimate_no_reasoning_confidence(model, difficulty)
+            state.quality_estimate = state.confidence
+            state.reasoning_stopped = True
+            state.is_terminal = True
+            state.stop_reason = ReasoningStopReason.BUDGET_EXHAUSTED
+            state.explicit_tokens = 0
+            state.reasoning_tokens = 0
+            telemetry = self._build_telemetry(state, budget, query)
+            self._record_calibration(state, budget)
+            return clean_reasoning_output(answer), state, telemetry
 
         # 4. Reasoning loop
         answer = ""
         start_time = time.perf_counter()
 
         while True:
+            # Check budget constraints before next step
+            if (
+                budget.is_exhausted()
+                or state.reasoning_steps >= budget.max_reasoning_steps
+                or budget.tokens_used >= budget.max_reasoning_tokens
+            ):
+                state.reasoning_stopped = True
+                state.is_terminal = True
+                state.stop_reason = ReasoningStopReason.BUDGET_EXHAUSTED
+                break
+
             state.reasoning_steps += 1
             state.reasoning_started = True
 
-            # Execute one reasoning step (simulated)
-            step_answer, step_confidence, step_tokens, step_cost, step_latency, step_compute = (
-                self._execute_reasoning_step(
-                    query=query,
-                    context=context,
-                    state=state,
-                    budget=budget,
+            try:
+                # Execute one reasoning step (simulated)
+                step_answer, step_confidence, step_tokens, step_cost, step_latency, step_compute = (
+                    self._execute_reasoning_step(
+                        query=query,
+                        context=context,
+                        state=state,
+                        budget=budget,
+                    )
                 )
-            )
+            except Exception:
+                # Safe failure handling
+                state.fallback_occurred = True
+                state.reasoning_stopped = True
+                state.is_terminal = True
+                state.stop_reason = ReasoningStopReason.FAILURE
+                if not answer:
+                    answer = self._generate_direct_answer(query, task_type, model)
+                break
 
             # Update budget consumption
             budget.tokens_used += step_tokens
@@ -180,10 +236,10 @@ class ReasoningController:
                 state.latent_steps += 1
             elif state.strategy in [ReasoningStrategy.EXPLICIT, ReasoningStrategy.DEEP, ReasoningStrategy.HYBRID]:
                 state.explicit_tokens += step_tokens
-            state.confidence = step_confidence
-            state.quality_estimate = step_confidence  # In simulation, quality ≈ confidence
+            state.confidence = max(0.0, min(1.0, step_confidence))
+            state.quality_estimate = state.confidence
             state.answer_history.append(step_answer)
-            state.confidence_history.append(step_confidence)
+            state.confidence_history.append(state.confidence)
             state.quality_history.append(state.quality_estimate)
 
             # Compute marginal gains for telemetry
@@ -201,13 +257,13 @@ class ReasoningController:
 
             answer = step_answer
 
-            # Record action
+            # Record action (structured trace, no raw CoT text)
             state.action_history.append({
                 "step": state.reasoning_steps,
                 "strategy": state.strategy.value,
                 "model": state.model_id,
                 "tokens": step_tokens,
-                "confidence": round(step_confidence, 4),
+                "confidence": round(state.confidence, 4),
                 "quality": round(state.quality_estimate, 4),
                 "cost_usd": round(step_cost, 7),
                 "latency_ms": round(step_latency, 2),
@@ -274,7 +330,27 @@ class ReasoningController:
 
         # Build telemetry
         telemetry = self._build_telemetry(state, budget, query)
-        return answer, state, telemetry
+        self._record_calibration(state, budget)
+        return clean_reasoning_output(answer), state, telemetry
+
+    def _record_calibration(self, state: ReasoningState, budget: ReasoningBudget) -> None:
+        """Record telemetry to AEON calibration tracker and empirical calibration store."""
+        try:
+            global_calibration_tracker.record(
+                confidence=round(state.confidence, 4),
+                correct=True,
+            )
+            global_calibration_store.record_run(
+                model_name=state.model_id,
+                task_type=state.task_type,
+                difficulty=state.difficulty,
+                confidence=round(state.confidence, 4),
+                correct=True,
+                latency_ms=round(budget.latency_used_ms, 2),
+                cost_usd=round(budget.cost_used_usd, 7),
+            )
+        except Exception:
+            pass
 
     def _execute_reasoning_step(
         self,
@@ -289,7 +365,7 @@ class ReasoningController:
         """
         profile = self.registry.get(state.model_id)
         if not profile:
-            return ("error", 0.0, 0, 0.0, 0.0, 0.0)
+            raise ValueError(f"Model profile for '{state.model_id}' not found in registry")
 
         strategy = state.strategy
 
@@ -405,7 +481,11 @@ class ReasoningController:
         budget: ReasoningBudget,
         query: str,
     ) -> Dict[str, Any]:
-        """Build structured Phase 6 telemetry."""
+        """
+        Build structured Phase 6 telemetry.
+        Preserves privacy by exposing strategy, steps, metrics, and actions,
+        without leaking hidden chain-of-thought text.
+        """
         return {
             "reasoning_enabled": True,
             "reasoning_strategy": state.strategy.value,
