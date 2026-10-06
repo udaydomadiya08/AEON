@@ -5,7 +5,7 @@ Provides standard hardware profiles for Apple Silicon, NVIDIA CUDA (A100, H100),
 and CPU server nodes, along with analytical model memory footprint estimators.
 """
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 from aeon.hardware.types import (
     DeviceType,
     PrecisionType,
@@ -177,18 +177,31 @@ def estimate_model_memory_mb(
     model_name: str,
     precision: PrecisionType,
     seq_len: int = 512,
+    quantization: Optional[Any] = None,
 ) -> float:
     """
     Analytically compute the memory footprint of model weights and KV cache.
     Weight memory: params_b * (bits / 8) * 1024 MB
     KV Cache: 2 * layers * hidden_dim * seq_len * (bits / 8)
     """
+    if not isinstance(seq_len, int):
+        quantization = seq_len
+        seq_len = 512
+
     params = MODEL_PARAM_COUNTS.get(model_name, 7.0)
     bits = 32
     if precision in [PrecisionType.FP16, PrecisionType.BF16]:
         bits = 16
     elif precision in [PrecisionType.INT8, PrecisionType.FP8]:
         bits = 8
+
+    # Quantization impacts effective bit precision of weights
+    if quantization is not None:
+        q_val = quantization.value if hasattr(quantization, "value") else str(quantization)
+        if "int4" in q_val:
+            bits = min(bits, 4)
+        elif "int8" in q_val or "fp8" in q_val:
+            bits = min(bits, 8)
 
     # Weights
     weights_mb = params * (bits / 8.0) * 1024.0

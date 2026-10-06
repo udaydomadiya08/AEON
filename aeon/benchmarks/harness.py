@@ -1558,9 +1558,28 @@ class BenchmarkHarness:
             ("Phase 7 Depth OFF", dict(hardware_aware=True, adaptive_depth=False, reasoning=True, speculation=True, tools=True, memory=True)),
         ]
 
+        from aeon.hardware.types import HardwareConfig
+        from aeon.hardware.controller import HardwareController
+
         results = {}
         for name, kwargs in ablation_arms:
-            aeon_inst = AEON(policy="voi", **{k: v for k, v in kwargs.items() if k in ["hardware_aware", "adaptive_depth", "reasoning", "speculation", "tools", "memory"]})
+            hw_kwargs = {}
+            if "memory_safety_margin" in kwargs:
+                hw_kwargs["memory_safety_margin"] = kwargs["memory_safety_margin"]
+                hw_kwargs["memory_guard"] = (kwargs["memory_safety_margin"] > 0)
+            if "energy_awareness" in kwargs:
+                hw_kwargs["energy_awareness"] = kwargs["energy_awareness"]
+            if "thermal_awareness" in kwargs:
+                hw_kwargs["thermal_awareness"] = kwargs["thermal_awareness"]
+
+            hw_cfg = HardwareConfig(**hw_kwargs) if hw_kwargs else None
+            hw_ctrl = HardwareController(config=hw_cfg) if hw_cfg else None
+
+            aeon_inst = AEON(
+                policy="voi",
+                hardware_controller=hw_ctrl,
+                **{k: v for k, v in kwargs.items() if k in ["hardware_aware", "adaptive_depth", "reasoning", "speculation", "tools", "memory"]}
+            )
             traces = []
             for r in workload:
                 req = r.model_copy(deep=True)

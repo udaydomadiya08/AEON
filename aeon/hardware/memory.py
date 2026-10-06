@@ -6,7 +6,7 @@ resource checks to prevent Out-Of-Memory (OOM) failures, and generates
 deterministic resource-aware fallback suggestions.
 """
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Any
 from aeon.hardware.types import (
     DeviceType,
     PrecisionType,
@@ -24,7 +24,16 @@ class HardwareMemoryManager:
     """
 
     def __init__(self, safety_margin_ratio: float = 0.15):
-        self.safety_margin_ratio = max(0.01, min(0.50, safety_margin_ratio))
+        self.safety_margin_ratio = max(0.0, min(0.50, safety_margin_ratio))
+
+    def estimate_model_memory_mb(
+        self,
+        model_name: str,
+        precision: PrecisionType,
+        quantization: Optional[Any] = None,
+        seq_len: int = 512,
+    ) -> float:
+        return estimate_model_memory_mb(model_name, precision, seq_len=seq_len, quantization=quantization)
 
     def preflight_check(
         self,
@@ -32,6 +41,7 @@ class HardwareMemoryManager:
         precision: PrecisionType,
         device: DeviceType,
         profile: HardwareProfile,
+        quantization: Optional[Any] = None,
         seq_len: int = 512,
         memory_budget_mb: Optional[float] = None,
     ) -> MemoryAssessment:
@@ -44,7 +54,10 @@ class HardwareMemoryManager:
             avail_mb = total_mb * (0.85 if profile.memory_pressure != MemoryPressure.HIGH else 0.40)
         elif profile.unified_memory or device == DeviceType.MPS:
             total_mb = profile.ram_total_mb
-            avail_mb = profile.ram_available_mb
+            # On unified memory architectures (Apple Silicon), Metal dynamically reclaims inactive cache.
+            # Addressable capacity is the greater of immediate available RAM or system working set ceiling.
+            working_set_ceiling = total_mb * (0.70 if profile.memory_pressure != MemoryPressure.HIGH else 0.40)
+            avail_mb = max(profile.ram_available_mb, working_set_ceiling)
         else:
             total_mb = profile.ram_total_mb
             avail_mb = profile.ram_available_mb
@@ -53,8 +66,8 @@ class HardwareMemoryManager:
         if memory_budget_mb is not None and memory_budget_mb > 0:
             avail_mb = min(avail_mb, memory_budget_mb)
 
-        # Estimate required model memory
-        model_mem_mb = estimate_model_memory_mb(model_name, precision, seq_len=seq_len)
+        # Estimate required model memory with precision and quantization
+        model_mem_mb = estimate_model_memory_mb(model_name, precision, seq_len=seq_len, quantization=quantization)
         workspace_mb = round(model_mem_mb * 0.08, 2)
         kv_cache_mb = round(model_mem_mb * 0.05, 2)
         total_req_mb = model_mem_mb + workspace_mb + kv_cache_mb

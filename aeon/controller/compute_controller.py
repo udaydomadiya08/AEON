@@ -606,11 +606,10 @@ class ComputeController:
             plan.precision = hw_dec.precision.value
             plan.quantization = hw_dec.quantization.value
             plan.hardware_execution_mode = hw_dec.execution_mode.value
-            if not depth_active:
-                res["latency_ms"] = hw_dec.latency_ms
-                res["estimated_cost"] = hw_dec.cost_usd
-                res["estimated_energy"] = hw_dec.energy_joules
-                res["memory_mb"] = hw_dec.memory_mb
+            res["latency_ms"] = hw_dec.latency_ms
+            res["estimated_cost"] = hw_dec.cost_usd
+            res["estimated_energy"] = hw_dec.energy_joules
+            res["memory_mb"] = hw_dec.memory_mb
 
         # Build telemetry conforming to Section 20
         telemetry = Telemetry(

@@ -486,3 +486,112 @@ class TestCliHardware:
         result = runner.invoke(cli, ["hardware", "ablation"])
         assert result.exit_code == 0
         assert "Full AEON Phase 8" in result.output
+
+
+# ==============================================================================
+# 11. FORMAL BEHAVIORAL BENCHMARK SUITE (AUDIT SECTION 35)
+# ==============================================================================
+
+class TestPhase8BehavioralBenchmarkSuite:
+    """
+    Explicit ground-truth behavioural test suite validating Section 35:
+    Task A: Quality-sensitive -> FP32/FP16 preferred over INT8
+    Task B: Memory-constrained -> INT8 selected under memory cap
+    Task C: Large model + high-memory CUDA profile -> viable accelerator candidate
+    Task D: CPU-only environment -> deterministic CPU fallback
+    Task E: Unsupported FP8 -> deterministic fallback to supported precision
+    Task F: Thermal pressure -> elevated thermal penalty shifts utility
+    Task G: Quantization quality violation -> quantization rejected
+    Task H: Deterministic arithmetic -> Phase 4 tool remains preferred
+    """
+
+    def test_task_a_quality_sensitive_prefers_high_precision(self):
+        ctrl = HardwareController()
+        # High quality target 0.98 cannot tolerate INT8 precision degradation
+        decision = ctrl.evaluate_and_select(
+            query="Formal mathematical proof of Godel incompleteness",
+            model_name="aeon-medium-7b",
+            target_quality=0.98,
+        )
+        assert decision.precision in [PrecisionType.FP32, PrecisionType.FP16, PrecisionType.BF16]
+        assert decision.quantization == QuantizationMethod.NONE
+
+    def test_task_b_memory_constrained_selects_quantization(self):
+        ctrl = HardwareController()
+        # 7B model in FP16 is ~14.3 GB, which exceeds 9.0 GB budget, but fits in INT8 (~7.3 GB)
+        decision = ctrl.evaluate_and_select(
+            query="Analyze massive log corpus under tight memory constraints",
+            model_name="aeon-medium-7b",
+            memory_budget_mb=9000.0,
+            target_quality=0.75,
+        )
+        assert decision.quantization in [QuantizationMethod.INT8_WEIGHT_ONLY, QuantizationMethod.INT8_DYNAMIC]
+
+    def test_task_c_large_model_cuda_profile(self):
+        ctrl = HardwareController()
+        matrix = HardwareCapabilityMatrix(NVIDIA_A100_PROFILE)
+        cand = ctrl.cost_model.compute_metrics(
+            model_name="aeon-large-70b",
+            device=DeviceType.CUDA,
+            precision=PrecisionType.FP16,
+            quantization=QuantizationMethod.NONE,
+        )
+        assert cand["latency_ms"] < 250.0
+        assert cand["cost_usd"] > 0.0
+
+    def test_task_d_cpu_only_fallback(self):
+        detector = HardwareDetector()
+        with patch("torch.cuda.is_available", return_value=False), \
+             patch("torch.backends.mps.is_available", return_value=False):
+            profile = detector.detect_hardware(force_refresh=True)
+            ctrl = HardwareController(detector=detector)
+            decision = ctrl.evaluate_and_select(
+                query="CPU-only test task",
+                model_name="aeon-small-1.5b",
+            )
+            assert decision.device == DeviceType.CPU
+
+    def test_task_e_unsupported_fp8_fallback(self):
+        ctrl = HardwareController()
+        matrix = HardwareCapabilityMatrix(ctrl.profile)
+        mps_fp8 = matrix.check_support(DeviceType.MPS, PrecisionType.FP8)
+        assert mps_fp8.status == CapabilityStatus.UNSUPPORTED
+        decision = ctrl.evaluate_and_select(
+            query="Requesting unsupported FP8",
+            model_name="aeon-medium-7b",
+            preferred_precision="FP8",
+        )
+        assert decision.precision in [PrecisionType.FP16, PrecisionType.FP32, PrecisionType.BF16]
+
+    def test_task_f_thermal_pressure_shifts_utility(self):
+        ctrl_nominal = HardwareController()
+        ctrl_critical = HardwareController()
+        ctrl_critical.profile.thermal_pressure = ThermalPressure.CRITICAL
+        ctrl_critical.profile.thermal_temperature_c = 95.0
+
+        d_nom = ctrl_nominal.evaluate_and_select("compute task", model_name="aeon-medium-7b")
+        d_crit = ctrl_critical.evaluate_and_select("compute task", model_name="aeon-medium-7b")
+        assert d_crit.utility < d_nom.utility
+
+    def test_task_g_quantization_quality_violation_rejected(self):
+        ctrl = HardwareController()
+        decision = ctrl.evaluate_and_select(
+            query="Strict zero-tolerance precision task",
+            model_name="aeon-medium-7b",
+            target_quality=0.99,
+        )
+        for c in decision.candidates:
+            if c.quantization != QuantizationMethod.NONE:
+                assert not c.is_viable or "quality_below_target" in (c.rejection_reason or "")
+
+    def test_task_h_deterministic_arithmetic_prefers_tool(self):
+        aeon = AEON(policy="voi", tools=True, hardware_aware=True)
+        req = InferenceRequest(
+            query="What is 17.5% of 840?",
+            task_hint="arithmetic",
+            tools=True,
+            hardware_aware=True,
+        )
+        res = aeon.run(req)
+        assert res.route == "tool"
+        assert res.trace.hardware_enabled is True

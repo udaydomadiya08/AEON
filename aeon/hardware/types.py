@@ -248,6 +248,7 @@ class HardwareDecision(BaseModel):
     energy_joules: float
     quality_estimate: float
     utility: float
+    flops: float = 0.0
     execution_mode: ExecutionMode
     candidates_evaluated: int = 1
     candidates: List[HardwareCandidate] = Field(default_factory=list)
@@ -270,6 +271,7 @@ class HardwareConfig(BaseModel):
     preferred_device: str = "auto"
     preferred_precision: str = "auto"
     preferred_quantization: str = "auto"
+    memory_guard: bool = True
     memory_safety_margin: float = 0.15
     thermal_awareness: bool = True
     energy_awareness: bool = True

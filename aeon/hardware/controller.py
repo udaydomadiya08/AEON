@@ -126,6 +126,9 @@ class HardwareController:
                 tokens_count=tokens_count,
                 layer_ratio=layer_ratio,
                 difficulty=difficulty,
+                preferred_device=preferred_device or self.config.preferred_device,
+                preferred_precision=preferred_precision or self.config.preferred_precision,
+                preferred_quantization=preferred_quantization or self.config.preferred_quantization,
                 fits_memory=fits_mem,
             )
             fallbacks.append("all_candidates_rejected_reverting_to_safe_fallback")
@@ -145,6 +148,7 @@ class HardwareController:
             energy_joules=chosen.estimated_energy_joules,
             quality_estimate=chosen.estimated_quality,
             utility=round(chosen.utility, 4),
+            flops=chosen.estimated_flops,
             execution_mode=ExecutionMode.MEASURED if not self.profile.is_simulated else ExecutionMode.SIMULATED,
             candidates_evaluated=len(candidates),
             candidates=candidates,
@@ -255,9 +259,10 @@ class HardwareController:
                         precision=prec,
                         device=dev,
                         profile=self.profile,
+                        quantization=quant,
                         memory_budget_mb=memory_budget_mb,
                     )
-                    if not mem_assessment.fits_in_memory:
+                    if self.config.memory_guard and not mem_assessment.fits_in_memory:
                         candidates.append(
                             self._create_rejected_candidate(
                                 cand_id,
@@ -340,13 +345,17 @@ class HardwareController:
                     norm_mem = min(1.0, mem_assessment.estimated_model_mb / max(1.0, mem_assessment.total_memory_mb))
                     prec_risk = 0.05 if prec in [PrecisionType.INT8, PrecisionType.FP8] else 0.0
 
+                    energy_penalty = (self.config.energy_lambda * norm_energy) if self.config.energy_awareness else 0.0
+                    thermal_penalty = (self.config.thermal_lambda * thermal_risk) if self.config.thermal_awareness else 0.0
+                    mem_penalty = (self.config.memory_lambda * norm_mem) if self.config.memory_guard else 0.0
+
                     utility = (
                         est_quality
                         - (self.config.latency_lambda * norm_lat)
                         - (self.config.cost_lambda * norm_cost)
-                        - (self.config.energy_lambda * norm_energy)
-                        - (self.config.memory_lambda * norm_mem)
-                        - (self.config.thermal_lambda * thermal_risk)
+                        - energy_penalty
+                        - mem_penalty
+                        - thermal_penalty
                         - (self.config.precision_risk_lambda * prec_risk)
                     )
 
@@ -410,11 +419,29 @@ class HardwareController:
         tokens_count: int,
         layer_ratio: float,
         difficulty: float,
+        preferred_device: Optional[Any] = None,
+        preferred_precision: Optional[Any] = None,
+        preferred_quantization: Optional[Any] = None,
         fits_memory: bool = True,
     ) -> HardwareCandidate:
-        dev = DeviceType.CPU
-        prec = PrecisionType.FP32
-        quant = QuantizationMethod.NONE
+        dev = preferred_device or DeviceType.CPU
+        if isinstance(dev, str):
+            try:
+                dev = DeviceType(dev)
+            except Exception:
+                dev = DeviceType.CPU
+        prec = preferred_precision or PrecisionType.FP32
+        if isinstance(prec, str):
+            try:
+                prec = PrecisionType(prec)
+            except Exception:
+                prec = PrecisionType.FP32
+        quant = preferred_quantization or QuantizationMethod.NONE
+        if isinstance(quant, str):
+            try:
+                quant = QuantizationMethod(quant)
+            except Exception:
+                quant = QuantizationMethod.NONE
         metrics = self.cost_model.compute_metrics(
             model_name=model_name,
             device=dev,
@@ -423,6 +450,7 @@ class HardwareController:
             tokens_count=tokens_count,
             layer_ratio=layer_ratio,
         )
+        mem_mb = self.memory_manager.estimate_model_memory_mb(model_name, prec, quant)
         return HardwareCandidate(
             candidate_id=f"fallback-{dev.value}-{prec.value}",
             model_name=model_name,
@@ -432,7 +460,7 @@ class HardwareController:
             estimated_quality=0.80,
             estimated_latency_ms=metrics["latency_ms"],
             estimated_cost_usd=metrics["cost_usd"],
-            estimated_memory_mb=1024.0,
+            estimated_memory_mb=mem_mb,
             estimated_energy_joules=10.0,
             estimated_flops=metrics["flops"],
             memory_pressure=MemoryPressure.NORMAL,
