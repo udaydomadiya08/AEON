@@ -199,23 +199,22 @@ class RestrictedPythonTool(BaseTool):
         # Threaded execution with timeout
         timeout = request.timeout_seconds or 2.0
         
+        import contextlib
+
         def target():
             nonlocal exec_error
-            old_stdout = sys.stdout
-            sys.stdout = captured_stdout
             try:
-                # If code is a single expression, capture its value in 'result'
-                try:
-                    expr_tree = ast.parse(code, mode="eval")
-                    res = eval(compile(expr_tree, "<restricted_python>", "eval"), restricted_globals, restricted_locals)
-                    restricted_locals["result"] = res
-                except Exception:
-                    # Otherwise execute as statement block
-                    exec(code, restricted_globals, restricted_locals)
+                with contextlib.redirect_stdout(captured_stdout):
+                    # If code is a single expression, capture its value in 'result'
+                    try:
+                        expr_tree = ast.parse(code, mode="eval")
+                        res = eval(compile(expr_tree, "<restricted_python>", "eval"), restricted_globals, restricted_locals)
+                        restricted_locals["result"] = res
+                    except Exception:
+                        # Otherwise execute as statement block
+                        exec(code, restricted_globals, restricted_locals)
             except Exception as e:
                 exec_error = e
-            finally:
-                sys.stdout = old_stdout
 
         t = threading.Thread(target=target)
         t.start()

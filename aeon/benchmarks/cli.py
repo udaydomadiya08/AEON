@@ -155,10 +155,10 @@ def benchmark_pareto():
 @benchmark_group.command("reproducibility")
 def benchmark_reproducibility():
     """Verify exact bit-for-bit reproducibility over deterministic seed runs."""
-    click.echo("\nExecuting Reproducibility Check across two independent runs with seed=42...")
-    runner = BenchmarkRunner()
-    run_1 = runner.run_suite()
-    run_2 = runner.run_suite()
+    runner_1 = BenchmarkRunner()
+    run_1 = runner_1.run_suite()
+    runner_2 = BenchmarkRunner()
+    run_2 = runner_2.run_suite()
 
     dict_1 = {k: v.model_dump() if hasattr(v, "model_dump") else v.dict() for k, v in run_1.results.items()}
     dict_2 = {k: v.model_dump() if hasattr(v, "model_dump") else v.dict() for k, v in run_2.results.items()}
